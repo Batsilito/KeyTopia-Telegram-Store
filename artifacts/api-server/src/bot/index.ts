@@ -1,7 +1,7 @@
 import { Bot, InlineKeyboard, InputFile, Keyboard, webhookCallback, type Context } from "grammy";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { and, desc, eq, gt, isNull } from "drizzle-orm";
+import { and, count, desc, eq, gt } from "drizzle-orm";
 import {
   checkoutSessions,
   db,
@@ -159,25 +159,33 @@ async function showShop(ctx: Context, user: typeof users.$inferSelect) {
     await ctx.reply(t(language, "noProducts"), { reply_markup: customerKeyboard(language) });
     return;
   }
-  for (const product of rows) {
-    const stock = await db
-      .select({ id: inventoryItems.id })
-      .from(inventoryItems)
-      .where(and(eq(inventoryItems.productId, product.id), eq(inventoryItems.status, "available")))
-      .limit(1);
-    const available = product.stockType === "unlimited" || stock.length > 0;
+  const stockRows = await db
+    .select({
+      productId: inventoryItems.productId,
+      availableQuantity: count(inventoryItems.id),
+    })
+    .from(inventoryItems)
+    .where(eq(inventoryItems.status, "available"))
+    .groupBy(inventoryItems.productId);
+  const stockByProduct = new Map(
+    stockRows.map((row) => [row.productId, Number(row.availableQuantity)]),
+  );
+  const keyboard = new InlineKeyboard();
+  const list = rows.map((product) => {
     const name = language === "ar" ? product.nameAr : product.nameEn;
-    const description = [
-      name,
-      `${t(language, "duration")}: ${product.duration}`,
-      `${t(language, "warranty")}: ${product.warranty}`,
-      `${t(language, "price")}: $${product.priceUsd}`,
-      `${t(language, "stock")}: ${available ? t(language, "inStock") : t(language, "outOfStock")}`,
-    ].join("\n");
-    const keyboard = new InlineKeyboard();
-    if (available) keyboard.text(t(language, "buy"), `product:${product.id}`);
-    await ctx.reply(description, { reply_markup: keyboard });
+    const isUnlimited = product.stockType === "unlimited";
+    const quantity = isUnlimited ? "∞" : String(stockByProduct.get(product.id) ?? 0);
+    const inStock = isUnlimited || quantity !== "0";
+    if (inStock) {
+      keyboard.text(`🛒 ${name}`, `product:${product.id}`).row();
+    }
+    return `${inStock ? "🟢" : "🔴"} ${name} | ${product.priceUsd} USDT | ${quantity}`;
+  });
+  if (keyboard.inline_keyboard.length === 0) {
+    await ctx.reply(list.join("\n"));
+    return;
   }
+  await ctx.reply(list.join("\n"), { reply_markup: keyboard });
 }
 
 async function showProduct(ctx: Context, user: typeof users.$inferSelect, productId: string) {
