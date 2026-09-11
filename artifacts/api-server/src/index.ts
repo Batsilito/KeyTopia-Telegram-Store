@@ -25,7 +25,16 @@ app.listen(port, (err) => {
   logger.info({ port }, "Server listening");
   const bot = buildTelegramBot();
   if (bot && process.env.NODE_ENV !== "production") {
-    bot.start().catch((error) => logger.error({ err: error }, "Telegram polling stopped"));
-    logger.info("Telegram bot started in development polling mode");
+    void (async () => {
+      try {
+        const botInfo = await bot.api.getMe();
+        logger.info({ username: botInfo.username }, "Telegram bot identity verified");
+        await bot.api.deleteWebhook({ drop_pending_updates: false });
+        logger.info("Cleared Telegram webhook before starting development polling");
+        await bot.start();
+      } catch (error) {
+        logger.error({ err: error }, "Telegram polling stopped");
+      }
+    })();
   }
 });

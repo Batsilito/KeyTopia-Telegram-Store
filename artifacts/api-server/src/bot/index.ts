@@ -283,6 +283,9 @@ async function acceptPaymentReference(ctx: Context, user: typeof users.$inferSel
 export function buildTelegramBot() {
   if (!telegramBot) return null;
   const bot = telegramBot;
+  bot.catch((error) => {
+    logger.error({ err: error }, "Telegram update handler failed");
+  });
   bot.command("start", async (ctx) => {
     const user = await findOrCreateCustomer(ctx);
     if (!user) return;
