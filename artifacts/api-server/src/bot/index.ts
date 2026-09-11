@@ -37,8 +37,18 @@ function customerKeyboard(language: BotLanguage) {
 
 function languageKeyboard() {
   return new InlineKeyboard()
-    .text("English", "language:en")
-    .text("العربية", "language:ar");
+    .text("🇬🇧 English", "language:en")
+    .text("🇸🇦 العربية", "language:ar");
+}
+
+function paymentMethodLabel(method: string) {
+  const labels: Record<string, string> = {
+    binance: "🟡 BINANCE",
+    bybit: "🔷 BYBIT",
+    vodafone_cash: "📱 VODAFONE CASH",
+    instapay: "🏦 INSTAPAY",
+  };
+  return labels[method] ?? `💳 ${method.replace("_", " ").toUpperCase()}`;
 }
 
 async function findOrCreateCustomer(ctx: Context) {
@@ -201,7 +211,7 @@ async function beginCheckout(ctx: Context, user: typeof users.$inferSelect, prod
   const language = languageOf(user);
   const keyboard = new InlineKeyboard();
   for (const method of methods) {
-    keyboard.text(method.method.replace("_", " ").toUpperCase(), `method:${checkout[0].id}:${method.method}`).row();
+    keyboard.text(paymentMethodLabel(method.method), `method:${checkout[0].id}:${method.method}`).row();
   }
   keyboard.text(t(language, "cancel"), "nav:home");
   await ctx.reply(`${t(language, "choosePayment")}\n\nReference: ${reference}\n${t(language, "price")}: $${product.priceUsd}`, { reply_markup: keyboard });
