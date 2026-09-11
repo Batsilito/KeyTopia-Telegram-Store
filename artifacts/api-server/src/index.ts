@@ -31,6 +31,7 @@ app.listen(port, (err) => {
         logger.info({ username: botInfo.username }, "Telegram bot identity verified");
         await bot.api.deleteWebhook({ drop_pending_updates: false });
         logger.info("Cleared Telegram webhook before starting development polling");
+        logger.info("Starting Telegram long polling");
         await bot.start();
       } catch (error) {
         logger.error({ err: error }, "Telegram polling stopped");

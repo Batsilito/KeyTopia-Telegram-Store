@@ -286,6 +286,10 @@ export function buildTelegramBot() {
   bot.catch((error) => {
     logger.error({ err: error }, "Telegram update handler failed");
   });
+  bot.use(async (ctx, next) => {
+    logger.info({ updateId: ctx.update.update_id }, "Telegram update received");
+    await next();
+  });
   bot.command("start", async (ctx) => {
     const user = await findOrCreateCustomer(ctx);
     if (!user) return;
