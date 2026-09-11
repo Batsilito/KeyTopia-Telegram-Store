@@ -147,7 +147,7 @@ async function showHome(ctx: Context, user: typeof users.$inferSelect) {
   });
 }
 
-async function showShop(ctx: Context, user: typeof users.$inferSelect) {
+async function showShop(ctx: Context, user: typeof users.$inferSelect, requestedPage = 0, editMessage = false) {
   if (!(await ensureAccess(ctx, user))) return;
   const language = languageOf(user);
   const rows = await db
@@ -170,22 +170,57 @@ async function showShop(ctx: Context, user: typeof users.$inferSelect) {
   const stockByProduct = new Map(
     stockRows.map((row) => [row.productId, Number(row.availableQuantity)]),
   );
+  const pageSize = 10;
+  const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
+  const page = Math.min(Math.max(requestedPage, 0), pageCount - 1);
+  const pageRows = rows.slice(page * pageSize, (page + 1) * pageSize);
   const keyboard = new InlineKeyboard();
-  const list = rows.map((product) => {
+  for (const product of pageRows) {
     const name = language === "ar" ? product.nameAr : product.nameEn;
     const isUnlimited = product.stockType === "unlimited";
     const quantity = isUnlimited ? "∞" : String(stockByProduct.get(product.id) ?? 0);
     const inStock = isUnlimited || quantity !== "0";
-    if (inStock) {
-      keyboard.text(`🛒 ${name}`, `product:${product.id}`).row();
-    }
-    return `${inStock ? "🟢" : "🔴"} ${name} | ${product.priceUsd} USDT | ${quantity}`;
-  });
-  if (keyboard.inline_keyboard.length === 0) {
-    await ctx.reply(list.join("\n"));
-    return;
+    keyboard
+      .text(`${name} | ${product.priceUsd} USDT | ${inStock ? "🟢" : "🔴"} ${quantity}`, `product:${product.id}`)
+      .row();
   }
-  await ctx.reply(list.join("\n"), { reply_markup: keyboard });
+  if (page > 0) keyboard.text(t(language, "previous"), `shop:page:${page - 1}`);
+  keyboard.text(`${page + 1}/${pageCount}`, "shop:noop");
+  if (page < pageCount - 1) keyboard.text(t(language, "next"), `shop:page:${page + 1}`);
+  keyboard.row();
+  keyboard.text(t(language, "refreshStock"), `shop:refresh:${page}`).row();
+  const channel = await channelConfigured();
+  if (channel) {
+    keyboard.url(
+      t(language, "channel"),
+      `https://t.me/${channel.replace(/^@/, "")}`,
+    ).row();
+  } else {
+    keyboard.text(t(language, "channel"), "nav:channel").row();
+  }
+  keyboard
+    .text(t(language, "orderHistory"), "nav:orders")
+    .text(t(language, "wallet"), "nav:wallet")
+    .row()
+    .text(t(language, "checkoutNotice"), "nav:checkout")
+    .row()
+    .text(t(language, "mainMenu"), "nav:home");
+
+  const text = pageRows
+    .map((product) => {
+      const name = language === "ar" ? product.nameAr : product.nameEn;
+      const isUnlimited = product.stockType === "unlimited";
+      const quantity = isUnlimited ? "∞" : String(stockByProduct.get(product.id) ?? 0);
+      const inStock = isUnlimited || quantity !== "0";
+      return `${inStock ? "🟢" : "🔴"} ${name} | ${product.priceUsd} USDT | ${quantity}`;
+    })
+    .join("\n");
+
+  if (editMessage && ctx.callbackQuery) {
+    await ctx.editMessageText(text, { reply_markup: keyboard });
+  } else {
+    await ctx.reply(text, { reply_markup: keyboard });
+  }
 }
 
 async function showProduct(ctx: Context, user: typeof users.$inferSelect, productId: string) {
@@ -334,6 +369,19 @@ export function buildTelegramBot() {
     }
     if (data === "nav:shop") {
       await showShop(ctx, user);
+      return;
+    }
+    if (data.startsWith("shop:page:")) {
+      await showShop(ctx, user, Number(data.slice("shop:page:".length)), true);
+      return;
+    }
+    if (data.startsWith("shop:refresh:")) {
+      await showShop(ctx, user, Number(data.slice("shop:refresh:".length)), true);
+      return;
+    }
+    if (data === "shop:noop") return;
+    if (data === "nav:orders" || data === "nav:wallet" || data === "nav:checkout" || data === "nav:channel") {
+      await ctx.reply(t(languageOf(user), "comingSoon"));
       return;
     }
     if (data.startsWith("product:")) {
