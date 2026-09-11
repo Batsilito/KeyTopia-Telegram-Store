@@ -321,7 +321,12 @@ export function buildTelegramBot() {
   return bot;
 }
 
-export const telegramWebhookHandler = telegramBot
-  ? webhookCallback(telegramBot, "express")
-  : (_req: unknown, res: { status: (code: number) => { send: (body: string) => void } }) =>
-      res.status(503).send("Telegram bot is not configured");
+const webhookUnavailable = (
+  _req: unknown,
+  res: { status: (code: number) => { send: (body: string) => void } },
+) => res.status(503).send("Telegram webhook is disabled while polling is active");
+
+export const telegramWebhookHandler =
+  telegramBot && process.env.NODE_ENV === "production"
+    ? webhookCallback(telegramBot, "express")
+    : webhookUnavailable;
