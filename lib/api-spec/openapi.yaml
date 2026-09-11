@@ -3,20 +3,29 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: KeyTopia Telegram store operations API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
-    description: Health operations
+  - name: auth
+  - name: dashboard
+  - name: products
+  - name: inventory
+  - name: orders
+  - name: payments
+  - name: customers
+  - name: support
+  - name: promotions
+  - name: settings
+  - name: analytics
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,13 +33,966 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /auth/session:
+    get:
+      operationId: getAdminSession
+      tags: [auth]
+      summary: Get the current admin session
+      responses:
+        "200":
+          description: Session state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminSession"
+  /auth/login:
+    post:
+      operationId: adminLogin
+      tags: [auth]
+      summary: Sign in to the admin dashboard
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminLoginInput"
+      responses:
+        "200":
+          description: Signed in
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminSession"
+        "401":
+          description: Invalid credentials
+  /auth/logout:
+    post:
+      operationId: adminLogout
+      tags: [auth]
+      summary: End the current admin session
+      responses:
+        "204":
+          description: Signed out
+  /dashboard/overview:
+    get:
+      operationId: getDashboardOverview
+      tags: [dashboard]
+      summary: Get operational dashboard metrics and recent activity
+      responses:
+        "200":
+          description: Dashboard overview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardOverview"
+  /products:
+    get:
+      operationId: listProducts
+      tags: [products]
+      summary: List products
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [all, active, inactive]
+            default: all
+        - in: query
+          name: deliveryType
+          schema:
+            type: string
+            enum: [automatic, manual]
+      responses:
+        "200":
+          description: Product page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductPage"
+    post:
+      operationId: createProduct
+      tags: [products]
+      summary: Create a product
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductInput"
+      responses:
+        "201":
+          description: Created product
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+  /products/{productId}:
+    get:
+      operationId: getProduct
+      tags: [products]
+      summary: Get a product
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      responses:
+        "200":
+          description: Product
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+    patch:
+      operationId: updateProduct
+      tags: [products]
+      summary: Update a product
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductUpdate"
+      responses:
+        "200":
+          description: Updated product
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+  /inventory:
+    get:
+      operationId: listInventory
+      tags: [inventory]
+      summary: List inventory items
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - in: query
+          name: productId
+          schema:
+            type: string
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [all, available, reserved, delivered, disabled]
+            default: all
+      responses:
+        "200":
+          description: Inventory page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryPage"
+    post:
+      operationId: importInventory
+      tags: [inventory]
+      summary: Import one inventory item per line
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InventoryImportInput"
+      responses:
+        "201":
+          description: Import result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryImportResult"
+  /inventory/summary:
+    get:
+      operationId: getInventorySummary
+      tags: [inventory]
+      summary: Get inventory counts
+      responses:
+        "200":
+          description: Inventory summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventorySummary"
+  /inventory/{inventoryId}/disable:
+    post:
+      operationId: disableInventory
+      tags: [inventory]
+      summary: Disable an inventory item
+      parameters:
+        - $ref: "#/components/parameters/InventoryId"
+      responses:
+        "200":
+          description: Disabled inventory item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryItem"
+  /orders:
+    get:
+      operationId: listOrders
+      tags: [orders]
+      summary: List orders
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [all, paid, processing, delivered, cancelled]
+            default: all
+        - in: query
+          name: search
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Order page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderPage"
+  /orders/{orderId}:
+    get:
+      operationId: getOrder
+      tags: [orders]
+      summary: Get an order
+      parameters:
+        - $ref: "#/components/parameters/OrderId"
+      responses:
+        "200":
+          description: Order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+  /orders/{orderId}/status:
+    post:
+      operationId: updateOrderStatus
+      tags: [orders]
+      summary: Move an order through fulfillment
+      parameters:
+        - $ref: "#/components/parameters/OrderId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderStatusInput"
+      responses:
+        "200":
+          description: Updated order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+  /orders/{orderId}/deliver:
+    post:
+      operationId: deliverOrder
+      tags: [orders]
+      summary: Deliver a manual order
+      parameters:
+        - $ref: "#/components/parameters/OrderId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeliveryInput"
+      responses:
+        "200":
+          description: Delivered order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+  /payments:
+    get:
+      operationId: listPayments
+      tags: [payments]
+      summary: List payment submissions
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [all, pending, submitted, confirmed, rejected, cancelled]
+            default: all
+      responses:
+        "200":
+          description: Payment page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentPage"
+  /payments/{paymentId}/confirm:
+    post:
+      operationId: confirmPayment
+      tags: [payments]
+      summary: Confirm a payment idempotently
+      parameters:
+        - $ref: "#/components/parameters/PaymentId"
+      responses:
+        "200":
+          description: Confirmed payment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Payment"
+  /payments/{paymentId}/reject:
+    post:
+      operationId: rejectPayment
+      tags: [payments]
+      summary: Reject a payment with a reason
+      parameters:
+        - $ref: "#/components/parameters/PaymentId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaymentRejectionInput"
+      responses:
+        "200":
+          description: Rejected payment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Payment"
+  /customers:
+    get:
+      operationId: listCustomers
+      tags: [customers]
+      summary: List customers
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - in: query
+          name: search
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Customer page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerPage"
+  /support/tickets:
+    get:
+      operationId: listSupportTickets
+      tags: [support]
+      summary: List support tickets
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [all, open, waiting_customer, waiting_agent, closed]
+            default: all
+      responses:
+        "200":
+          description: Support ticket page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupportTicketPage"
+  /support/tickets/{ticketId}/messages:
+    post:
+      operationId: replyToSupportTicket
+      tags: [support]
+      summary: Reply to a support ticket
+      parameters:
+        - $ref: "#/components/parameters/TicketId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SupportMessageInput"
+      responses:
+        "201":
+          description: Support message
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupportMessage"
+  /flash-sales:
+    get:
+      operationId: listFlashSales
+      tags: [promotions]
+      summary: List flash sales
+      responses:
+        "200":
+          description: Flash sale list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/FlashSale"
+    post:
+      operationId: createFlashSale
+      tags: [promotions]
+      summary: Schedule a flash sale
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FlashSaleInput"
+      responses:
+        "201":
+          description: Flash sale
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FlashSale"
+  /promo-codes:
+    get:
+      operationId: listPromoCodes
+      tags: [promotions]
+      summary: List promo codes
+      responses:
+        "200":
+          description: Promo code list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PromoCode"
+    post:
+      operationId: createPromoCode
+      tags: [promotions]
+      summary: Create a promo code
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PromoCodeInput"
+      responses:
+        "201":
+          description: Promo code
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PromoCode"
+  /settings:
+    get:
+      operationId: getStoreSettings
+      tags: [settings]
+      summary: Get store settings
+      responses:
+        "200":
+          description: Store settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StoreSettings"
+    patch:
+      operationId: updateStoreSettings
+      tags: [settings]
+      summary: Update store settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StoreSettingsUpdate"
+      responses:
+        "200":
+          description: Updated settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StoreSettings"
+  /analytics/summary:
+    get:
+      operationId: getAnalyticsSummary
+      tags: [analytics]
+      summary: Get date-filtered analytics
+      parameters:
+        - in: query
+          name: from
+          required: true
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: to
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: Analytics summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalyticsSummary"
 components:
+  parameters:
+    Page:
+      in: query
+      name: page
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    PageSize:
+      in: query
+      name: pageSize
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    ProductId:
+      in: path
+      name: productId
+      required: true
+      schema: { type: string, format: uuid }
+    InventoryId:
+      in: path
+      name: inventoryId
+      required: true
+      schema: { type: string, format: uuid }
+    OrderId:
+      in: path
+      name: orderId
+      required: true
+      schema: { type: string, format: uuid }
+    PaymentId:
+      in: path
+      name: paymentId
+      required: true
+      schema: { type: string, format: uuid }
+    TicketId:
+      in: path
+      name: ticketId
+      required: true
+      schema: { type: string, format: uuid }
   schemas:
     HealthStatus:
       type: object
       properties:
+        status: { type: string }
+      required: [status]
+    Admin:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        name: { type: string }
+        role:
+          type: string
+          enum: [super_admin, support_agent]
+      required: [id, email, name, role]
+    AdminSession:
+      type: object
+      properties:
+        authenticated: { type: boolean }
+        admin:
+          oneOf:
+            - $ref: "#/components/schemas/Admin"
+            - type: "null"
+      required: [authenticated, admin]
+    AdminLoginInput:
+      type: object
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 1 }
+      required: [email, password]
+    Product:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        nameEn: { type: string }
+        nameAr: { type: string }
+        duration: { type: string }
+        warranty: { type: string }
+        priceUsd: { type: number }
+        deliveryType:
+          type: string
+          enum: [automatic, manual]
+        stockType:
+          type: string
+          enum: [unlimited, limited]
+        active: { type: boolean }
+        displayStock: { type: boolean }
+        availableStock: { type: integer }
+        lowStockThreshold: { type: integer }
+        imageUrl: { type: ["string", "null"] }
+        instructionsEn: { type: string }
+        instructionsAr: { type: string }
+        createdAt: { type: string, format: date-time }
+      required: [id, nameEn, nameAr, duration, warranty, priceUsd, deliveryType, stockType, active, displayStock, availableStock, lowStockThreshold, imageUrl, instructionsEn, instructionsAr, createdAt]
+    ProductInput:
+      type: object
+      properties:
+        nameEn: { type: string, minLength: 1 }
+        nameAr: { type: string, minLength: 1 }
+        duration: { type: string, minLength: 1 }
+        warranty: { type: string, minLength: 1 }
+        priceUsd: { type: number, minimum: 0 }
+        deliveryType: { type: string, enum: [automatic, manual] }
+        stockType: { type: string, enum: [unlimited, limited] }
+        active: { type: boolean }
+        displayStock: { type: boolean }
+        lowStockThreshold: { type: integer, minimum: 0 }
+        imageUrl: { type: ["string", "null"] }
+        instructionsEn: { type: string }
+        instructionsAr: { type: string }
+      required: [nameEn, nameAr, duration, warranty, priceUsd, deliveryType, stockType, active, displayStock, lowStockThreshold, instructionsEn, instructionsAr]
+    ProductUpdate:
+      type: object
+      properties:
+        nameEn: { type: string, minLength: 1 }
+        nameAr: { type: string, minLength: 1 }
+        duration: { type: string, minLength: 1 }
+        warranty: { type: string, minLength: 1 }
+        priceUsd: { type: number, minimum: 0 }
+        deliveryType: { type: string, enum: [automatic, manual] }
+        stockType: { type: string, enum: [unlimited, limited] }
+        active: { type: boolean }
+        displayStock: { type: boolean }
+        lowStockThreshold: { type: integer, minimum: 0 }
+        imageUrl: { type: ["string", "null"] }
+        instructionsEn: { type: string }
+        instructionsAr: { type: string }
+    ProductPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Product" }
+        page: { type: integer }
+        pageSize: { type: integer }
+        total: { type: integer }
+      required: [items, page, pageSize, total]
+    InventoryItem:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        productId: { type: string, format: uuid }
+        productName: { type: string }
+        maskedValue: { type: string }
         status:
           type: string
-      required:
-        - status
+          enum: [available, reserved, delivered, disabled]
+        orderNumber: { type: ["string", "null"] }
+        createdAt: { type: string, format: date-time }
+      required: [id, productId, productName, maskedValue, status, orderNumber, createdAt]
+    InventoryPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/InventoryItem" }
+        page: { type: integer }
+        pageSize: { type: integer }
+        total: { type: integer }
+      required: [items, page, pageSize, total]
+    InventoryImportInput:
+      type: object
+      properties:
+        productId: { type: string, format: uuid }
+        values:
+          type: array
+          minItems: 1
+          items: { type: string, minLength: 1 }
+      required: [productId, values]
+    InventoryImportResult:
+      type: object
+      properties:
+        imported: { type: integer }
+        skippedDuplicates: { type: integer }
+        available: { type: integer }
+      required: [imported, skippedDuplicates, available]
+    InventorySummary:
+      type: object
+      properties:
+        total: { type: integer }
+        available: { type: integer }
+        reserved: { type: integer }
+        delivered: { type: integer }
+        disabled: { type: integer }
+        lowStockProducts: { type: integer }
+      required: [total, available, reserved, delivered, disabled, lowStockProducts]
+    Customer:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        telegramUserId: { type: string }
+        username: { type: ["string", "null"] }
+        displayName: { type: string }
+        language:
+          type: string
+          enum: [en, ar]
+        orderCount: { type: integer }
+        lifetimeValueUsd: { type: number }
+        walletBalanceUsd: { type: number }
+        joinedAt: { type: string, format: date-time }
+        lastActivityAt: { type: string, format: date-time }
+      required: [id, telegramUserId, username, displayName, language, orderCount, lifetimeValueUsd, walletBalanceUsd, joinedAt, lastActivityAt]
+    CustomerPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Customer" }
+        page: { type: integer }
+        pageSize: { type: integer }
+        total: { type: integer }
+      required: [items, page, pageSize, total]
+    Order:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        orderNumber: { type: string }
+        customerName: { type: string }
+        productName: { type: string }
+        priceUsd: { type: number }
+        paymentMethod:
+          type: string
+          enum: [binance, bybit, vodafone_cash, instapay]
+        status:
+          type: string
+          enum: [paid, processing, delivered, cancelled]
+        deliveryType:
+          type: string
+          enum: [automatic, manual]
+        createdAt: { type: string, format: date-time }
+        deliveredAt: { type: ["string", "null"], format: date-time }
+        deliveryInfo: { type: ["string", "null"] }
+      required: [id, orderNumber, customerName, productName, priceUsd, paymentMethod, status, deliveryType, createdAt, deliveredAt, deliveryInfo]
+    OrderPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Order" }
+        page: { type: integer }
+        pageSize: { type: integer }
+        total: { type: integer }
+      required: [items, page, pageSize, total]
+    OrderStatusInput:
+      type: object
+      properties:
+        status: { type: string, enum: [paid, processing, delivered, cancelled] }
+      required: [status]
+    DeliveryInput:
+      type: object
+      properties:
+        deliveryInfo: { type: string, minLength: 1 }
+      required: [deliveryInfo]
+    Payment:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        orderNumber: { type: ["string", "null"] }
+        customerName: { type: string }
+        productName: { type: string }
+        paymentMethod:
+          type: string
+          enum: [binance, bybit, vodafone_cash, instapay]
+        usdAmount: { type: number }
+        egpAmount: { type: ["number", "null"] }
+        transactionReference: { type: ["string", "null"] }
+        status:
+          type: string
+          enum: [pending, submitted, confirmed, rejected, cancelled]
+        submittedAt: { type: ["string", "null"], format: date-time }
+        rejectionReason: { type: ["string", "null"] }
+      required: [id, orderNumber, customerName, productName, paymentMethod, usdAmount, egpAmount, transactionReference, status, submittedAt, rejectionReason]
+    PaymentPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Payment" }
+        page: { type: integer }
+        pageSize: { type: integer }
+        total: { type: integer }
+      required: [items, page, pageSize, total]
+    PaymentRejectionInput:
+      type: object
+      properties:
+        reason: { type: string, minLength: 1 }
+      required: [reason]
+    SupportTicket:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        customerName: { type: string }
+        subject: { type: string }
+        status:
+          type: string
+          enum: [open, waiting_customer, waiting_agent, closed]
+        lastMessage: { type: string }
+        updatedAt: { type: string, format: date-time }
+      required: [id, customerName, subject, status, lastMessage, updatedAt]
+    SupportTicketPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/SupportTicket" }
+        page: { type: integer }
+        pageSize: { type: integer }
+        total: { type: integer }
+      required: [items, page, pageSize, total]
+    SupportMessageInput:
+      type: object
+      properties:
+        body: { type: string, minLength: 1 }
+      required: [body]
+    SupportMessage:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        ticketId: { type: string, format: uuid }
+        body: { type: string }
+        authorType: { type: string, enum: [customer, admin] }
+        createdAt: { type: string, format: date-time }
+      required: [id, ticketId, body, authorType, createdAt]
+    FlashSale:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        productId: { type: string, format: uuid }
+        productName: { type: string }
+        originalPriceUsd: { type: number }
+        salePriceUsd: { type: number }
+        discountPercent: { type: number }
+        startsAt: { type: string, format: date-time }
+        endsAt: { type: string, format: date-time }
+        status: { type: string, enum: [scheduled, active, paused, expired, cancelled] }
+        quantity: { type: ["integer", "null"] }
+      required: [id, productId, productName, originalPriceUsd, salePriceUsd, discountPercent, startsAt, endsAt, status, quantity]
+    FlashSaleInput:
+      type: object
+      properties:
+        productId: { type: string, format: uuid }
+        salePriceUsd: { type: number, minimum: 0 }
+        startsAt: { type: string, format: date-time }
+        endsAt: { type: string, format: date-time }
+        quantity: { type: ["integer", "null"], minimum: 1 }
+      required: [productId, salePriceUsd, startsAt, endsAt]
+    PromoCode:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string }
+        discountType: { type: string, enum: [percentage, fixed_usd] }
+        value: { type: number }
+        maxUses: { type: ["integer", "null"] }
+        usedCount: { type: integer }
+        expiresAt: { type: ["string", "null"], format: date-time }
+        active: { type: boolean }
+      required: [id, code, discountType, value, maxUses, usedCount, expiresAt, active]
+    PromoCodeInput:
+      type: object
+      properties:
+        code: { type: string, minLength: 1 }
+        discountType: { type: string, enum: [percentage, fixed_usd] }
+        value: { type: number, minimum: 0 }
+        maxUses: { type: ["integer", "null"], minimum: 1 }
+        expiresAt: { type: ["string", "null"], format: date-time }
+        active: { type: boolean }
+      required: [code, discountType, value, active]
+    StoreSettings:
+      type: object
+      properties:
+        storeName: { type: string }
+        requiredTelegramChannel: { type: ["string", "null"] }
+        cashbackPercent: { type: number }
+        referralRewardUsd: { type: number }
+        usdToEgpRate: { type: number }
+        paymentRounding: { type: string, enum: [exact, nearest_egp, nearest_5_egp] }
+        checkoutTimeoutMinutes: { type: integer }
+        lowStockThreshold: { type: integer }
+        maintenanceMode: { type: boolean }
+        supportAvailable: { type: boolean }
+        binanceEnabled: { type: boolean }
+        bybitEnabled: { type: boolean }
+        vodafoneCashEnabled: { type: boolean }
+        instapayEnabled: { type: boolean }
+        termsVersion: { type: string }
+      required: [storeName, requiredTelegramChannel, cashbackPercent, referralRewardUsd, usdToEgpRate, paymentRounding, checkoutTimeoutMinutes, lowStockThreshold, maintenanceMode, supportAvailable, binanceEnabled, bybitEnabled, vodafoneCashEnabled, instapayEnabled, termsVersion]
+    StoreSettingsUpdate:
+      type: object
+      properties:
+        storeName: { type: string, minLength: 1 }
+        requiredTelegramChannel: { type: ["string", "null"] }
+        cashbackPercent: { type: number, minimum: 0, maximum: 100 }
+        referralRewardUsd: { type: number, minimum: 0 }
+        usdToEgpRate: { type: number, minimum: 0 }
+        paymentRounding: { type: string, enum: [exact, nearest_egp, nearest_5_egp] }
+        checkoutTimeoutMinutes: { type: integer, minimum: 1 }
+        lowStockThreshold: { type: integer, minimum: 0 }
+        maintenanceMode: { type: boolean }
+        supportAvailable: { type: boolean }
+        binanceEnabled: { type: boolean }
+        bybitEnabled: { type: boolean }
+        vodafoneCashEnabled: { type: boolean }
+        instapayEnabled: { type: boolean }
+        termsVersion: { type: string, minLength: 1 }
+    AnalyticsSummary:
+      type: object
+      properties:
+        revenueUsd: { type: number }
+        orderCount: { type: integer }
+        averageOrderValueUsd: { type: number }
+        newCustomers: { type: integer }
+        returningCustomers: { type: integer }
+        cashbackIssuedUsd: { type: number }
+        referralRewardsIssuedUsd: { type: number }
+        cancelledOrders: { type: integer }
+        paymentConfirmationMinutes: { type: number }
+        revenueByPaymentMethod:
+          type: array
+          items:
+            $ref: "#/components/schemas/MetricPoint"
+        topProducts:
+          type: array
+          items:
+            $ref: "#/components/schemas/MetricPoint"
+      required: [revenueUsd, orderCount, averageOrderValueUsd, newCustomers, returningCustomers, cashbackIssuedUsd, referralRewardsIssuedUsd, cancelledOrders, paymentConfirmationMinutes, revenueByPaymentMethod, topProducts]
+    MetricPoint:
+      type: object
+      properties:
+        label: { type: string }
+        value: { type: number }
+      required: [label, value]
+    DashboardOverview:
+      type: object
+      properties:
+        revenueTodayUsd: { type: number }
+        ordersToday: { type: integer }
+        pendingPayments: { type: integer }
+        awaitingDelivery: { type: integer }
+        openSupportTickets: { type: integer }
+        lowStockProducts: { type: integer }
+        activeFlashSales: { type: integer }
+        newCustomers: { type: integer }
+        recentOrders:
+          type: array
+          items: { $ref: "#/components/schemas/Order" }
+        recentPayments:
+          type: array
+          items: { $ref: "#/components/schemas/Payment" }
+        recentTickets:
+          type: array
+          items: { $ref: "#/components/schemas/SupportTicket" }
+      required: [revenueTodayUsd, ordersToday, pendingPayments, awaitingDelivery, openSupportTickets, lowStockProducts, activeFlashSales, newCustomers, recentOrders, recentPayments, recentTickets]
 
