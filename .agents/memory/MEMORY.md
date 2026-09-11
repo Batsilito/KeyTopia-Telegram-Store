@@ -1,0 +1,1 @@
+- [Telegram bot bundling](grammy-bundling.md) — keep grammY external to the API esbuild bundle so its optional Node platform module resolves at runtime.

@@ -36,6 +36,7 @@ async function buildAll() {
       "bcrypt",
       "argon2",
       "fsevents",
+      "grammy",
       "re2",
       "farmhash",
       "xxhash-addon",

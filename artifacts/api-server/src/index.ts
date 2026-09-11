@@ -1,5 +1,6 @@
 import app from "./app";
 import { logger } from "./lib/logger";
+import { buildTelegramBot } from "./bot";
 
 const rawPort = process.env["PORT"];
 
@@ -22,4 +23,9 @@ app.listen(port, (err) => {
   }
 
   logger.info({ port }, "Server listening");
+  const bot = buildTelegramBot();
+  if (bot && process.env.NODE_ENV !== "production") {
+    bot.start().catch((error) => logger.error({ err: error }, "Telegram polling stopped"));
+    logger.info("Telegram bot started in development polling mode");
+  }
 });
