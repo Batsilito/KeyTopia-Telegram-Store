@@ -34,6 +34,8 @@ function customerKeyboard(language: BotLanguage) {
     .text(t(language, "support"))
     .row()
     .text(t(language, "settings"))
+    .row()
+    .text(t(language, "mainMenu"))
     .resized();
 }
 
@@ -147,6 +149,18 @@ async function showHome(ctx: Context, user: typeof users.$inferSelect) {
   });
 }
 
+async function getProductAvailability(product: typeof products.$inferSelect) {
+  if (product.stockType === "unlimited") {
+    return { inStock: true, quantity: "∞" };
+  }
+  const stock = await db
+    .select({ availableQuantity: count(inventoryItems.id) })
+    .from(inventoryItems)
+    .where(and(eq(inventoryItems.productId, product.id), eq(inventoryItems.status, "available")));
+  const quantity = Number(stock[0]?.availableQuantity ?? 0);
+  return { inStock: quantity > 0, quantity: String(quantity) };
+}
+
 async function showShop(ctx: Context, user: typeof users.$inferSelect, requestedPage = 0, editMessage = false) {
   if (!(await ensureAccess(ctx, user))) return;
   const language = languageOf(user);
@@ -206,15 +220,7 @@ async function showShop(ctx: Context, user: typeof users.$inferSelect, requested
     .row()
     .text(t(language, "mainMenu"), "nav:home");
 
-  const text = pageRows
-    .map((product) => {
-      const name = language === "ar" ? product.nameAr : product.nameEn;
-      const isUnlimited = product.stockType === "unlimited";
-      const quantity = isUnlimited ? "∞" : String(stockByProduct.get(product.id) ?? 0);
-      const inStock = isUnlimited || quantity !== "0";
-      return `${inStock ? "🟢" : "🔴"} ${name} | ${product.priceUsd} USDT | ${quantity}`;
-    })
-    .join("\n");
+  const text = "\u2060";
 
   if (editMessage && ctx.callbackQuery) {
     await ctx.editMessageText(text, { reply_markup: keyboard });
@@ -231,13 +237,48 @@ async function showProduct(ctx: Context, user: typeof users.$inferSelect, produc
   const language = languageOf(user);
   const name = language === "ar" ? product.nameAr : product.nameEn;
   const instructions = language === "ar" ? product.instructionsAr : product.instructionsEn;
-  const keyboard = new InlineKeyboard()
-    .text(t(language, "buy"), `buy:${product.id}`)
+  const availability = await getProductAvailability(product);
+  const keyboard = new InlineKeyboard();
+  if (availability.inStock) {
+    keyboard.text(`${t(language, "buyNow")} · ${product.priceUsd} USDT`, `buy:${product.id}`).row();
+  }
+  keyboard
+    .text(t(language, "refreshStock"), `product:refresh:${product.id}`)
     .row()
-    .text(t(language, "back"), "nav:shop");
-  await ctx.reply(`${name}\n\n${instructions}\n\n${t(language, "price")}: $${product.priceUsd}`, {
-    reply_markup: keyboard,
-  });
+    .text(t(language, "backToShop"), "nav:shop");
+  const details = [
+    `🧩 ${name}`,
+    "",
+    `💲 ${t(language, "price")}: ${product.priceUsd} USDT`,
+    `📊 ${t(language, "status")}: ${availability.inStock ? `🟢 ${t(language, "available")}` : `🔴 ${t(language, "outOfStock")}`}`,
+    `📦 ${t(language, "quantity")}: ${availability.quantity}`,
+    "",
+    `📝 ${t(language, "description")}`,
+    instructions || "• —",
+    "",
+    `🛡 ${t(language, "warranty")}`,
+    product.warranty || "—",
+    "",
+    `📌 ${t(language, "importantNotes")}`,
+    `• ${t(language, "duration")}: ${product.duration}`,
+    "",
+    `📖 ${t(language, "quickGuide")}`,
+    t(language, "guideReview"),
+    t(language, "guideBuy"),
+    t(language, "guidePay"),
+    t(language, "guideDelivery"),
+    "",
+    `📦 ${t(language, "deliveryNotice")}`,
+  ].join("\n");
+  if (product.imageUrl) {
+    try {
+      await ctx.replyWithPhoto(product.imageUrl, { caption: details, reply_markup: keyboard });
+      return;
+    } catch (error) {
+      logger.warn({ err: error, productId: product.id }, "Unable to send product image");
+    }
+  }
+  await ctx.reply(details, { reply_markup: keyboard });
 }
 
 async function beginCheckout(ctx: Context, user: typeof users.$inferSelect, productId: string) {
@@ -385,6 +426,10 @@ export function buildTelegramBot() {
       return;
     }
     if (data.startsWith("product:")) {
+      if (data.startsWith("product:refresh:")) {
+        await showProduct(ctx, user, data.slice("product:refresh:".length));
+        return;
+      }
       await showProduct(ctx, user, data.slice("product:".length));
       return;
     }
@@ -408,7 +453,9 @@ export function buildTelegramBot() {
     const language = languageOf(user);
     if (ctx.message.text === t(language, "shop")) await showShop(ctx, user);
     else if (ctx.message.text === t(language, "settings")) await ctx.reply(t(language, "chooseLanguage"), { reply_markup: languageKeyboard() });
-    else if (ctx.message.text === t(language, "home")) await showHome(ctx, user);
+    else if (ctx.message.text === t(language, "home") || ctx.message.text === t(language, "mainMenu")) {
+      await showHome(ctx, user);
+    }
   });
   return bot;
 }
