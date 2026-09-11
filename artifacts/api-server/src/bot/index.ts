@@ -1,4 +1,6 @@
-import { Bot, InlineKeyboard, Keyboard, webhookCallback, type Context } from "grammy";
+import { Bot, InlineKeyboard, InputFile, Keyboard, webhookCallback, type Context } from "grammy";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import { and, desc, eq, gt, isNull } from "drizzle-orm";
 import {
   checkoutSessions,
@@ -49,6 +51,17 @@ function paymentMethodLabel(method: string) {
     instapay: "🏦 INSTAPAY",
   };
   return labels[method] ?? `💳 ${method.replace("_", " ").toUpperCase()}`;
+}
+
+function paymentLogoPath(method: string) {
+  const filenames: Record<string, string> = {
+    instapay: "instapay-logo.png",
+    vodafone_cash: "vodafone-cash-logo.png",
+  };
+  const filename = filenames[method];
+  if (!filename) return null;
+  const path = resolve(process.cwd(), "artifacts/api-server/assets", filename);
+  return existsSync(path) ? path : null;
 }
 
 async function findOrCreateCustomer(ctx: Context) {
@@ -234,6 +247,12 @@ async function showPayment(ctx: Context, user: typeof users.$inferSelect, checko
     `${t(language, "price")}: $${checkout[0].priceUsd}`,
     config[0].paymentIdentifier ? `Recipient: ${config[0].paymentIdentifier}` : "",
   ].filter(Boolean).join("\n");
+  const logoPath = paymentLogoPath(method);
+  if (logoPath) {
+    await ctx.replyWithPhoto(new InputFile(logoPath), {
+      caption: paymentMethodLabel(method),
+    });
+  }
   await ctx.reply(details, { reply_markup: new InlineKeyboard().text(t(language, "iHavePaid"), `paid:${checkoutId}`).row().text(t(language, "cancel"), "nav:home") });
 }
 
