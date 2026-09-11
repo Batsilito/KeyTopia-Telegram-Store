@@ -6,7 +6,9 @@ database, customers, payments, inventory, or admin accounts.
 
 ## Local setup
 
-1. Provision a PostgreSQL database and set `DATABASE_URL`.
+1. Add the Neon PostgreSQL connection string in Replit Secrets with the exact
+   key `Neon_Connection`. The application also accepts `DATABASE_URL` as a
+   legacy fallback, but `Neon_Connection` takes priority.
 2. Copy `.env.example` values into the Replit development environment. Keep
    `SESSION_SECRET`, `INITIAL_SUPERADMIN_PASSWORD`, `TELEGRAM_BOT_TOKEN`, and
    `TELEGRAM_WEBHOOK_SECRET` in workspace Secrets.
@@ -60,7 +62,7 @@ implemented.
 
 ## Deployment checklist
 
-- Set a production `DATABASE_URL` for the new store database.
+- Set the production `Neon_Connection` secret for the new store database.
 - Set `SESSION_SECRET` to a unique random value.
 - Set the Super Admin bootstrap email/password, log in once, then remove the
   bootstrap password.
