@@ -14,5 +14,6 @@ export const PaymentStatus = {
   submitted: 'submitted',
   confirmed: 'confirmed',
   rejected: 'rejected',
+  verification_failed: 'verification_failed',
   cancelled: 'cancelled',
 } as const;

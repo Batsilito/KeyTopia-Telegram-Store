@@ -339,6 +339,14 @@ export const PaymentPaymentMethod = {
   instapay: 'instapay',
 } as const;
 
+export type PaymentKind = typeof PaymentKind[keyof typeof PaymentKind];
+
+
+export const PaymentKind = {
+  product_payment: 'product_payment',
+  wallet_top_up: 'wallet_top_up',
+} as const;
+
 export type PaymentStatus = typeof PaymentStatus[keyof typeof PaymentStatus];
 
 
@@ -347,6 +355,7 @@ export const PaymentStatus = {
   submitted: 'submitted',
   confirmed: 'confirmed',
   rejected: 'rejected',
+  verification_failed: 'verification_failed',
   cancelled: 'cancelled',
 } as const;
 
@@ -362,11 +371,14 @@ export interface Payment {
   egpAmount: number | null;
   /** @nullable */
   transactionReference: string | null;
+  kind: PaymentKind;
   status: PaymentStatus;
   /** @nullable */
   submittedAt: string | null;
   /** @nullable */
   rejectionReason: string | null;
+  /** @nullable */
+  failureReason: string | null;
 }
 
 export interface PaymentPage {
@@ -757,6 +769,7 @@ export const ListPaymentsStatus = {
   submitted: 'submitted',
   confirmed: 'confirmed',
   rejected: 'rejected',
+  verification_failed: 'verification_failed',
   cancelled: 'cancelled',
 } as const;
 

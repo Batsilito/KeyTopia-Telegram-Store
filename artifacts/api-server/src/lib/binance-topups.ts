@@ -21,6 +21,7 @@ const BINANCE_API_BASE_URLS = [
   "https://api2.binance.com",
 ] as const;
 const POLL_LOOKBACK_MS = 15 * 60 * 1000;
+const BINANCE_VERIFICATION_GRACE_MS = 5 * 60 * 1000;
 const MAX_PENDING_PAYMENTS = 100;
 
 export type BinanceApiHostDiagnostic = {
@@ -76,6 +77,18 @@ export type ConfirmedBinanceOrderPayment = CustomerNotification & {
 export type ConfirmedBinancePayment =
   | ConfirmedBinanceWalletTopUp
   | ConfirmedBinanceOrderPayment;
+
+export type FailedBinancePayment = CustomerNotification & {
+  kind: "failure";
+  paymentKind: "wallet" | "order";
+  amountUsd: string;
+  transactionId: string;
+  reason: string;
+};
+
+export type BinancePaymentProcessingResult =
+  | ConfirmedBinancePayment
+  | FailedBinancePayment;
 
 function amountInCents(value: string | number) {
   const normalized = String(value).trim();
@@ -438,7 +451,92 @@ async function confirmProductPayment(
   });
 }
 
-export async function pollBinancePayments(): Promise<ConfirmedBinancePayment[]> {
+async function failWalletTopUp(
+  topUp: {
+    id: string;
+    userId: string;
+    amountUsd: string;
+    submittedTransactionId: string;
+  },
+  reason: string,
+): Promise<FailedBinancePayment | null> {
+  return db.transaction(async (tx) => {
+    const failed = await tx
+      .update(walletTopUps)
+      .set({
+        status: "verification_failed",
+        verificationFailureReason: reason,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(walletTopUps.id, topUp.id), eq(walletTopUps.status, "pending")))
+      .returning({ id: walletTopUps.id });
+    if (!failed[0]) return null;
+    const customer = await tx
+      .select({ telegramUserId: users.telegramUserId, language: users.language })
+      .from(users)
+      .where(eq(users.id, topUp.userId))
+      .limit(1);
+    if (!customer[0]) return null;
+    return {
+      kind: "failure",
+      paymentKind: "wallet",
+      telegramUserId: customer[0].telegramUserId,
+      language: customer[0].language,
+      amountUsd: topUp.amountUsd,
+      transactionId: topUp.submittedTransactionId,
+      reason,
+    };
+  });
+}
+
+async function failProductPayment(
+  payment: {
+    id: string;
+    userId: string;
+    amountUsd: string;
+    submittedTransactionId: string;
+  },
+  reason: string,
+): Promise<FailedBinancePayment | null> {
+  return db.transaction(async (tx) => {
+    const failed = await tx
+      .update(payments)
+      .set({
+        status: "verification_failed",
+        verificationFailureReason: reason,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(payments.id, payment.id), eq(payments.status, "submitted")))
+      .returning({ id: payments.id });
+    if (!failed[0]) return null;
+    const customer = await tx
+      .select({ telegramUserId: users.telegramUserId, language: users.language })
+      .from(users)
+      .where(eq(users.id, payment.userId))
+      .limit(1);
+    if (!customer[0]) return null;
+    return {
+      kind: "failure",
+      paymentKind: "order",
+      telegramUserId: customer[0].telegramUserId,
+      language: customer[0].language,
+      amountUsd: payment.amountUsd,
+      transactionId: payment.submittedTransactionId,
+      reason,
+    };
+  });
+}
+
+async function hasClaimedTransaction(transactionId: string) {
+  const claims = await db
+    .select({ id: binanceTransactionClaims.id })
+    .from(binanceTransactionClaims)
+    .where(eq(binanceTransactionClaims.transactionId, transactionId))
+    .limit(1);
+  return Boolean(claims[0]);
+}
+
+export async function pollBinancePayments(): Promise<BinancePaymentProcessingResult[]> {
   const [receivingUid, pendingTopUps, pendingPayments] = await Promise.all([
     getReceivingBinanceUid(),
     db
@@ -514,7 +612,8 @@ export async function pollBinancePayments(): Promise<ConfirmedBinancePayment[]> 
   const earliestRequest = Math.min(...candidates.map((candidate) => candidate.requestedAt.getTime()));
   const usedTransactionIds = new Set<string>();
   if (remoteVerifierConfigured) {
-    const confirmed: ConfirmedBinancePayment[] = [];
+    const processed: BinancePaymentProcessingResult[] = [];
+    const now = Date.now();
     for (const candidate of candidates) {
       if (usedTransactionIds.has(candidate.transactionId)) continue;
       const verified = await verifyThroughRailway(
@@ -525,12 +624,47 @@ export async function pollBinancePayments(): Promise<ConfirmedBinancePayment[]> 
         },
         receivingUid,
       );
-      if (!verified) continue;
+      if (!verified) {
+        if (now - candidate.requestedAt.getTime() < BINANCE_VERIFICATION_GRACE_MS) continue;
+        const reason =
+          "Binance could not find a matching successful payment to the configured recipient for the submitted transaction ID and amount.";
+        const failed =
+          candidate.kind === "wallet"
+            ? await failWalletTopUp(candidate.record, reason)
+            : await failProductPayment(
+                {
+                  id: candidate.record.id,
+                  userId: candidate.record.userId,
+                  amountUsd: candidate.amountUsd,
+                  submittedTransactionId: candidate.transactionId,
+                },
+                reason,
+              );
+        if (failed) processed.push(failed);
+        continue;
+      }
+      if (await hasClaimedTransaction(candidate.transactionId)) {
+        const reason = "This Binance transaction ID has already been used for another payment.";
+        const failed =
+          candidate.kind === "wallet"
+            ? await failWalletTopUp(candidate.record, reason)
+            : await failProductPayment(
+                {
+                  id: candidate.record.id,
+                  userId: candidate.record.userId,
+                  amountUsd: candidate.amountUsd,
+                  submittedTransactionId: candidate.transactionId,
+                },
+                reason,
+              );
+        if (failed) processed.push(failed);
+        continue;
+      }
       if (candidate.kind === "wallet") {
         const result = await confirmWalletTopUp(candidate.record, candidate.transactionId);
         if (result) {
           usedTransactionIds.add(candidate.transactionId);
-          confirmed.push({
+          processed.push({
             kind: "wallet",
             ...result,
             amountUsd: candidate.amountUsd,
@@ -541,7 +675,7 @@ export async function pollBinancePayments(): Promise<ConfirmedBinancePayment[]> 
         const result = await confirmProductPayment(candidate.record, candidate.transactionId);
         if (result) {
           usedTransactionIds.add(candidate.transactionId);
-          confirmed.push({
+          processed.push({
             kind: "order",
             telegramUserId: result.telegramUserId,
             language: result.language,
@@ -554,7 +688,7 @@ export async function pollBinancePayments(): Promise<ConfirmedBinancePayment[]> 
         }
       }
     }
-    return confirmed;
+    return processed;
   }
   const transactions = await getPayHistory(
     Math.max(0, earliestRequest - POLL_LOOKBACK_MS),
@@ -562,19 +696,55 @@ export async function pollBinancePayments(): Promise<ConfirmedBinancePayment[]> 
   );
   if (!transactions) return [];
 
-  const confirmed: ConfirmedBinancePayment[] = [];
+  const processed: BinancePaymentProcessingResult[] = [];
+  const now = Date.now();
   for (const candidate of candidates) {
     if (usedTransactionIds.has(candidate.transactionId)) continue;
     const match = transactions.find((transaction) =>
       matchesTransaction(transaction, candidate, receivingUid),
     );
-    if (!match?.transactionId) continue;
+    if (!match?.transactionId) {
+      if (now - candidate.requestedAt.getTime() < BINANCE_VERIFICATION_GRACE_MS) continue;
+      const reason =
+        "No Binance record matched the submitted transaction ID, amount, currency, recipient, and payment type.";
+      const failed =
+        candidate.kind === "wallet"
+          ? await failWalletTopUp(candidate.record, reason)
+          : await failProductPayment(
+              {
+                id: candidate.record.id,
+                userId: candidate.record.userId,
+                amountUsd: candidate.amountUsd,
+                submittedTransactionId: candidate.transactionId,
+              },
+              reason,
+            );
+      if (failed) processed.push(failed);
+      continue;
+    }
+    if (await hasClaimedTransaction(match.transactionId)) {
+      const reason = "This Binance transaction ID has already been used for another payment.";
+      const failed =
+        candidate.kind === "wallet"
+          ? await failWalletTopUp(candidate.record, reason)
+          : await failProductPayment(
+              {
+                id: candidate.record.id,
+                userId: candidate.record.userId,
+                amountUsd: candidate.amountUsd,
+                submittedTransactionId: candidate.transactionId,
+              },
+              reason,
+            );
+      if (failed) processed.push(failed);
+      continue;
+    }
 
     if (candidate.kind === "wallet") {
       const result = await confirmWalletTopUp(candidate.record, match.transactionId);
       if (result) {
         usedTransactionIds.add(match.transactionId);
-        confirmed.push({
+        processed.push({
           kind: "wallet",
           ...result,
           amountUsd: candidate.amountUsd,
@@ -585,7 +755,7 @@ export async function pollBinancePayments(): Promise<ConfirmedBinancePayment[]> 
       const result = await confirmProductPayment(candidate.record, match.transactionId);
       if (result) {
         usedTransactionIds.add(match.transactionId);
-        confirmed.push({
+        processed.push({
           kind: "order",
           telegramUserId: result.telegramUserId,
           language: result.language,
@@ -598,5 +768,5 @@ export async function pollBinancePayments(): Promise<ConfirmedBinancePayment[]> 
       }
     }
   }
-  return confirmed;
+  return processed;
 }

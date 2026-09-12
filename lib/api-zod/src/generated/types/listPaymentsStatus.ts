@@ -15,5 +15,6 @@ export const ListPaymentsStatus = {
   submitted: 'submitted',
   confirmed: 'confirmed',
   rejected: 'rejected',
+  verification_failed: 'verification_failed',
   cancelled: 'cancelled',
 } as const;

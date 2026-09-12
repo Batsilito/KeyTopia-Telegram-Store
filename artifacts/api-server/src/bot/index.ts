@@ -21,7 +21,10 @@ import {
   users,
 } from "@workspace/db";
 import { logger } from "../lib/logger";
-import { pollBinancePayments } from "../lib/binance-topups";
+import {
+  pollBinancePayments,
+  type FailedBinancePayment,
+} from "../lib/binance-topups";
 import { fulfillAutomaticOrder } from "../lib/order-fulfillment";
 import { t, type BotLanguage } from "./locales";
 
@@ -189,6 +192,38 @@ export async function notifyAdminProductSold(orderId: string) {
     return Boolean(marked[0]);
   } catch (error) {
     logger.warn({ err: error, orderId }, "Unable to send product sale notification to admin");
+    return false;
+  }
+}
+
+async function notifyAdminBinanceVerificationFailure(payment: FailedBinancePayment) {
+  if (!telegramBot) return false;
+  const settings = await db
+    .select({ adminTelegramChatId: storeSettings.adminTelegramChatId })
+    .from(storeSettings)
+    .limit(1);
+  const chatId = settings[0]?.adminTelegramChatId?.trim();
+  if (!chatId) return false;
+  try {
+    await telegramBot.api.sendMessage(
+      chatId,
+      [
+        "<b>⚠️ BINANCE VERIFICATION FAILED</b>",
+        "",
+        `🧾 <b>Type:</b> ${payment.paymentKind === "wallet" ? "Wallet top-up" : "Product payment"}`,
+        `👤 <b>Customer Telegram ID:</b> <code>${escapeHtml(payment.telegramUserId)}</code>`,
+        `💰 <b>Amount:</b> ${escapeHtml(payment.amountUsd)} USDT`,
+        `🔗 <b>Transaction ID:</b> <code>${escapeHtml(payment.transactionId)}</code>`,
+        `📝 <b>Reason:</b> ${escapeHtml(payment.reason)}`,
+      ].join("\n"),
+      { parse_mode: "HTML" },
+    );
+    return true;
+  } catch (error) {
+    logger.warn(
+      { err: error, transactionId: payment.transactionId },
+      "Unable to send Binance verification failure to admin",
+    );
     return false;
   }
 }
@@ -386,10 +421,27 @@ export function processBinancePayments() {
   if (binanceProcessingPromise) return binanceProcessingPromise;
 
   const run = (async () => {
-    const confirmedPayments = await pollBinancePayments();
-    for (const payment of confirmedPayments) {
+    const processedPayments = await pollBinancePayments();
+    for (const payment of processedPayments) {
       try {
-        if (payment.kind === "order") {
+        if (payment.kind === "failure") {
+          const messageKey =
+            payment.paymentKind === "wallet"
+              ? "topUpVerificationFailed"
+              : "paymentVerificationFailed";
+          await telegramBot!.api.sendMessage(
+            payment.telegramUserId,
+            t(payment.language, messageKey)
+              .replace("{amount}", Number(payment.amountUsd).toFixed(2))
+              .replace("{transaction}", escapeHtml(payment.transactionId))
+              .replace("{reason}", escapeHtml(payment.reason)),
+            {
+              parse_mode: "HTML",
+              reply_markup: customerKeyboard(payment.language),
+            },
+          );
+          await notifyAdminBinanceVerificationFailure(payment);
+        } else if (payment.kind === "order") {
           await issueReferralRewardForOrder({
             id: payment.orderId,
             userId: payment.userId,

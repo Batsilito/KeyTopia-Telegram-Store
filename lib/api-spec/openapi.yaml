@@ -335,7 +335,7 @@ paths:
           name: status
           schema:
             type: string
-            enum: [all, pending, submitted, confirmed, rejected, cancelled]
+            enum: [all, pending, submitted, confirmed, rejected, verification_failed, cancelled]
             default: all
       responses:
         "200":
@@ -894,12 +894,16 @@ components:
         usdAmount: { type: number }
         egpAmount: { type: ["number", "null"] }
         transactionReference: { type: ["string", "null"] }
+        kind:
+          type: string
+          enum: [product_payment, wallet_top_up]
         status:
           type: string
-          enum: [pending, submitted, confirmed, rejected, cancelled]
+          enum: [pending, submitted, confirmed, rejected, verification_failed, cancelled]
         submittedAt: { type: ["string", "null"], format: date-time }
         rejectionReason: { type: ["string", "null"] }
-      required: [id, orderNumber, customerName, productName, paymentMethod, usdAmount, egpAmount, transactionReference, status, submittedAt, rejectionReason]
+        failureReason: { type: ["string", "null"] }
+      required: [id, kind, orderNumber, customerName, productName, paymentMethod, usdAmount, egpAmount, transactionReference, status, submittedAt, rejectionReason, failureReason]
     PaymentPage:
       type: object
       properties:

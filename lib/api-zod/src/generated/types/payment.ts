@@ -5,6 +5,7 @@
  * KeyTopia Telegram store operations API
  * OpenAPI spec version: 0.1.0
  */
+import type { PaymentKind } from './paymentKind';
 import type { PaymentPaymentMethod } from './paymentPaymentMethod';
 import type { PaymentStatus } from './paymentStatus';
 
@@ -20,9 +21,12 @@ export interface Payment {
   egpAmount: number | null;
   /** @nullable */
   transactionReference: string | null;
+  kind: PaymentKind;
   status: PaymentStatus;
   /** @nullable */
   submittedAt: Date | null;
   /** @nullable */
   rejectionReason: string | null;
+  /** @nullable */
+  failureReason: string | null;
 }

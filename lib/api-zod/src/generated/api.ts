@@ -111,9 +111,11 @@ export const GetDashboardOverviewResponse = zod.object({
   "usdAmount": zod.number(),
   "egpAmount": zod.number().nullable(),
   "transactionReference": zod.string().nullable(),
-  "status": zod.enum(['pending', 'submitted', 'confirmed', 'rejected', 'cancelled']),
+  "kind": zod.enum(['product_payment', 'wallet_top_up']),
+  "status": zod.enum(['pending', 'submitted', 'confirmed', 'rejected', 'verification_failed', 'cancelled']),
   "submittedAt": zod.coerce.date().nullable(),
-  "rejectionReason": zod.string().nullable()
+  "rejectionReason": zod.string().nullable(),
+  "failureReason": zod.string().nullable()
 })),
   "recentTickets": zod.array(zod.object({
   "id": zod.string().uuid(),
@@ -508,7 +510,7 @@ export const listPaymentsQueryStatusDefault = `all`;
 export const ListPaymentsQueryParams = zod.object({
   "page": zod.coerce.number().int().min(1).default(listPaymentsQueryPageDefault),
   "pageSize": zod.coerce.number().int().min(1).max(listPaymentsQueryPageSizeMax).default(listPaymentsQueryPageSizeDefault),
-  "status": zod.enum(['all', 'pending', 'submitted', 'confirmed', 'rejected', 'cancelled']).default(listPaymentsQueryStatusDefault)
+  "status": zod.enum(['all', 'pending', 'submitted', 'confirmed', 'rejected', 'verification_failed', 'cancelled']).default(listPaymentsQueryStatusDefault)
 })
 
 export const ListPaymentsResponse = zod.object({
@@ -521,9 +523,11 @@ export const ListPaymentsResponse = zod.object({
   "usdAmount": zod.number(),
   "egpAmount": zod.number().nullable(),
   "transactionReference": zod.string().nullable(),
-  "status": zod.enum(['pending', 'submitted', 'confirmed', 'rejected', 'cancelled']),
+  "kind": zod.enum(['product_payment', 'wallet_top_up']),
+  "status": zod.enum(['pending', 'submitted', 'confirmed', 'rejected', 'verification_failed', 'cancelled']),
   "submittedAt": zod.coerce.date().nullable(),
-  "rejectionReason": zod.string().nullable()
+  "rejectionReason": zod.string().nullable(),
+  "failureReason": zod.string().nullable()
 })),
   "page": zod.number().int(),
   "pageSize": zod.number().int(),
@@ -547,9 +551,11 @@ export const ConfirmPaymentResponse = zod.object({
   "usdAmount": zod.number(),
   "egpAmount": zod.number().nullable(),
   "transactionReference": zod.string().nullable(),
-  "status": zod.enum(['pending', 'submitted', 'confirmed', 'rejected', 'cancelled']),
+  "kind": zod.enum(['product_payment', 'wallet_top_up']),
+  "status": zod.enum(['pending', 'submitted', 'confirmed', 'rejected', 'verification_failed', 'cancelled']),
   "submittedAt": zod.coerce.date().nullable(),
-  "rejectionReason": zod.string().nullable()
+  "rejectionReason": zod.string().nullable(),
+  "failureReason": zod.string().nullable()
 })
 
 
@@ -576,9 +582,11 @@ export const RejectPaymentResponse = zod.object({
   "usdAmount": zod.number(),
   "egpAmount": zod.number().nullable(),
   "transactionReference": zod.string().nullable(),
-  "status": zod.enum(['pending', 'submitted', 'confirmed', 'rejected', 'cancelled']),
+  "kind": zod.enum(['product_payment', 'wallet_top_up']),
+  "status": zod.enum(['pending', 'submitted', 'confirmed', 'rejected', 'verification_failed', 'cancelled']),
   "submittedAt": zod.coerce.date().nullable(),
-  "rejectionReason": zod.string().nullable()
+  "rejectionReason": zod.string().nullable(),
+  "failureReason": zod.string().nullable()
 })
 
 

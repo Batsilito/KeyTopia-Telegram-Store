@@ -52,6 +52,7 @@ export * from './orderStatusInputStatus';
 export * from './pageParameter';
 export * from './pageSizeParameter';
 export * from './payment';
+export * from './paymentKind';
 export * from './paymentPage';
 export * from './paymentPaymentMethod';
 export * from './paymentRejectionInput';

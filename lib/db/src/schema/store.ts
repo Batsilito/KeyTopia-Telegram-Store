@@ -50,6 +50,7 @@ export const paymentStatusEnum = pgEnum("payment_status", [
   "submitted",
   "confirmed",
   "rejected",
+  "verification_failed",
   "cancelled",
 ]);
 export const supportStatusEnum = pgEnum("support_status", [
@@ -243,6 +244,7 @@ export const payments = pgTable("payments", {
   reviewedBy: uuid("reviewed_by"),
   reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
   rejectionReason: text("rejection_reason"),
+  verificationFailureReason: text("verification_failure_reason"),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -340,6 +342,7 @@ export const walletTransactions = pgTable("wallet_transactions", {
 export const walletTopUpStatusEnum = pgEnum("wallet_top_up_status", [
   "pending",
   "confirmed",
+  "verification_failed",
   "cancelled",
 ]);
 
@@ -352,6 +355,7 @@ export const walletTopUps = pgTable(
     submittedTransactionId: text("submitted_transaction_id").notNull(),
     status: walletTopUpStatusEnum("status").default("pending").notNull(),
     confirmedBinanceTransactionId: text("confirmed_binance_transaction_id"),
+    verificationFailureReason: text("verification_failure_reason"),
     requestedAt: timestamp("requested_at", { withTimezone: true }).defaultNow().notNull(),
     confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
     createdAt: createdAt(),

@@ -49,6 +49,7 @@ import {
   supportMessages,
   supportTickets,
   users,
+  walletTopUps,
 } from "@workspace/db";
 import {
   authenticateAdmin,
@@ -180,7 +181,7 @@ router.post("/auth/logout", async (req, res) => {
 router.get("/dashboard/overview", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return res;
-  const [revenue, orderCount, pendingPayments, awaitingDelivery, tickets, lowStock, flashSaleCount, newCustomers] =
+  const [revenue, orderCount, pendingPayments, pendingTopUps, awaitingDelivery, tickets, lowStock, flashSaleCount, newCustomers] =
     await Promise.all([
       db
         .select({ total: sum(orders.priceUsd) })
@@ -194,6 +195,10 @@ router.get("/dashboard/overview", async (req, res) => {
         .select({ total: count() })
         .from(payments)
         .where(inArray(payments.status, ["pending", "submitted"])),
+      db
+        .select({ total: count() })
+        .from(walletTopUps)
+        .where(eq(walletTopUps.status, "pending")),
       db
         .select({ total: count() })
         .from(orders)
@@ -228,7 +233,9 @@ router.get("/dashboard/overview", async (req, res) => {
   res.json({
     revenueTodayUsd: numberValue(revenue[0]?.total),
     ordersToday: Number(orderCount[0]?.total ?? 0),
-    pendingPayments: Number(pendingPayments[0]?.total ?? 0),
+    pendingPayments:
+      Number(pendingPayments[0]?.total ?? 0) +
+      Number(pendingTopUps[0]?.total ?? 0),
     awaitingDelivery: Number(awaitingDelivery[0]?.total ?? 0),
     openSupportTickets: Number(tickets[0]?.total ?? 0),
     lowStockProducts: Number(lowStock[0]?.total ?? 0),
@@ -574,31 +581,75 @@ router.post("/orders/:orderId/deliver", async (req, res) => {
 });
 
 async function listPaymentRows(limit = 20, params?: { page: number; pageSize: number; status?: string }) {
-  const conditions = [];
-  if (params?.status && params.status !== "all") conditions.push(eq(payments.status, params.status as "pending"));
-  const rows = await db
-    .select({ payment: payments, user: users, checkout: checkoutSessions, product: products })
-    .from(payments)
-    .innerJoin(users, eq(payments.userId, users.id))
-    .innerJoin(checkoutSessions, eq(payments.checkoutSessionId, checkoutSessions.id))
-    .leftJoin(products, eq(checkoutSessions.productId, products.id))
-    .where(conditions.length ? and(...conditions) : undefined)
-    .orderBy(desc(payments.createdAt))
-    .limit(params ? params.pageSize : limit)
-    .offset(params ? (params.page - 1) * params.pageSize : 0);
-  return rows.map((row) => ({
-    id: row.payment.id,
-    orderNumber: null,
-    customerName: `${row.user.firstName}${row.user.lastName ? ` ${row.user.lastName}` : ""}`,
-    productName: row.product?.nameEn ?? "Product no longer available",
-    paymentMethod: row.payment.paymentMethod,
-    usdAmount: numberValue(row.payment.usdAmount),
-    egpAmount: row.payment.egpAmount ? numberValue(row.payment.egpAmount) : null,
-    transactionReference: row.payment.transactionReference,
-    status: row.payment.status,
-    submittedAt: iso(row.payment.submittedAt),
-    rejectionReason: row.payment.rejectionReason,
-  }));
+  const paymentConditions = [];
+  const topUpConditions = [];
+  const status = params?.status;
+  const topUpStatusSupported =
+    !status ||
+    status === "all" ||
+    ["pending", "confirmed", "verification_failed", "cancelled"].includes(status);
+  if (status && status !== "all") {
+    if (["pending", "submitted", "confirmed", "rejected", "verification_failed", "cancelled"].includes(status)) {
+      paymentConditions.push(eq(payments.status, status as "pending"));
+    }
+    if (["pending", "confirmed", "verification_failed", "cancelled"].includes(status)) {
+      topUpConditions.push(eq(walletTopUps.status, status as "pending"));
+    }
+  }
+  const [paymentRows, topUpRows] = await Promise.all([
+    db
+      .select({ payment: payments, user: users, checkout: checkoutSessions, product: products })
+      .from(payments)
+      .innerJoin(users, eq(payments.userId, users.id))
+      .innerJoin(checkoutSessions, eq(payments.checkoutSessionId, checkoutSessions.id))
+      .leftJoin(products, eq(checkoutSessions.productId, products.id))
+      .where(paymentConditions.length ? and(...paymentConditions) : undefined),
+    topUpStatusSupported
+      ? db
+          .select({ topUp: walletTopUps, user: users })
+          .from(walletTopUps)
+          .innerJoin(users, eq(walletTopUps.userId, users.id))
+          .where(topUpConditions.length ? and(...topUpConditions) : undefined)
+      : Promise.resolve([]),
+  ]);
+  const items = [
+    ...paymentRows.map((row) => ({
+      id: row.payment.id,
+      kind: "product_payment" as const,
+      orderNumber: null,
+      customerName: `${row.user.firstName}${row.user.lastName ? ` ${row.user.lastName}` : ""}`,
+      productName: row.product?.nameEn ?? "Product no longer available",
+      paymentMethod: row.payment.paymentMethod,
+      usdAmount: numberValue(row.payment.usdAmount),
+      egpAmount: row.payment.egpAmount ? numberValue(row.payment.egpAmount) : null,
+      transactionReference: row.payment.transactionReference,
+      status: row.payment.status,
+      submittedAt: iso(row.payment.submittedAt),
+      rejectionReason: row.payment.rejectionReason,
+      failureReason: row.payment.verificationFailureReason ?? row.payment.rejectionReason,
+    })),
+    ...topUpRows.map((row) => ({
+      id: row.topUp.id,
+      kind: "wallet_top_up" as const,
+      orderNumber: null,
+      customerName: `${row.user.firstName}${row.user.lastName ? ` ${row.user.lastName}` : ""}`,
+      productName: "Wallet top-up",
+      paymentMethod: "binance" as const,
+      usdAmount: numberValue(row.topUp.amountUsd),
+      egpAmount: null,
+      transactionReference: row.topUp.submittedTransactionId,
+      status: row.topUp.status,
+      submittedAt: iso(row.topUp.requestedAt),
+      rejectionReason: row.topUp.verificationFailureReason,
+      failureReason: row.topUp.verificationFailureReason,
+    })),
+  ].sort((a, b) => {
+    const aTime = a.submittedAt ? new Date(a.submittedAt).getTime() : 0;
+    const bTime = b.submittedAt ? new Date(b.submittedAt).getTime() : 0;
+    return bTime - aTime;
+  });
+  if (!params) return items.slice(0, limit);
+  return items.slice((params.page - 1) * params.pageSize, params.page * params.pageSize);
 }
 
 router.get("/payments", async (req, res) => {
@@ -608,8 +659,33 @@ router.get("/payments", async (req, res) => {
   if (!admin) return res;
   const params = pageParams(parsed.data);
   const items = await listPaymentRows(20, { ...params, status: parsed.data.status });
-  const totals = await db.select({ total: count() }).from(payments);
-  res.json({ items, page: params.page, pageSize: params.pageSize, total: Number(totals[0]?.total ?? 0) });
+  const [paymentTotals, topUpTotals] = await Promise.all([
+    db
+      .select({ total: count() })
+      .from(payments)
+      .where(
+        parsed.data.status !== "all" &&
+          ["pending", "submitted", "confirmed", "rejected", "verification_failed", "cancelled"].includes(parsed.data.status)
+          ? eq(payments.status, parsed.data.status as "pending")
+          : undefined,
+      ),
+    ["all", "pending", "confirmed", "verification_failed", "cancelled"].includes(parsed.data.status)
+      ? db
+          .select({ total: count() })
+          .from(walletTopUps)
+          .where(
+            parsed.data.status !== "all"
+              ? eq(walletTopUps.status, parsed.data.status as "pending")
+              : undefined,
+          )
+      : Promise.resolve([{ total: 0 }]),
+  ]);
+  res.json({
+    items,
+    page: params.page,
+    pageSize: params.pageSize,
+    total: Number(paymentTotals[0]?.total ?? 0) + Number(topUpTotals[0]?.total ?? 0),
+  });
 });
 
 router.post("/payments/:paymentId/confirm", async (req, res) => {
@@ -737,10 +813,44 @@ router.post("/payments/:paymentId/reject", async (req, res) => {
   if (!admin) return res;
   const parsed = RejectPaymentBody.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Rejection reason is required" });
-  const rows = await db.update(payments).set({ status: "rejected", rejectionReason: parsed.data.reason, reviewedBy: admin.id, reviewedAt: new Date(), updatedAt: new Date() }).where(and(eq(payments.id, req.params.paymentId), inArray(payments.status, ["pending", "submitted"]))).returning();
-  if (!rows[0]) return res.status(409).json({ error: "Payment is already processed or missing" });
+  const rows = await db
+    .update(payments)
+    .set({
+      status: "rejected",
+      rejectionReason: parsed.data.reason,
+      reviewedBy: admin.id,
+      reviewedAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(payments.id, req.params.paymentId),
+        inArray(payments.status, ["pending", "submitted"]),
+      ),
+    )
+    .returning();
+  if (!rows[0]) {
+    const topUpRows = await db
+      .update(walletTopUps)
+      .set({
+        status: "cancelled",
+        verificationFailureReason: parsed.data.reason,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(walletTopUps.id, req.params.paymentId),
+          inArray(walletTopUps.status, ["pending", "verification_failed"]),
+        ),
+      )
+      .returning({ id: walletTopUps.id });
+    if (!topUpRows[0]) {
+      return res.status(409).json({ error: "Payment is already processed or missing" });
+    }
+  }
   const items = await listPaymentRows(1, { page: 1, pageSize: 1 });
-  res.json(items.find((item) => item.id === rows[0].id) ?? { id: rows[0].id });
+  const id = rows[0]?.id ?? req.params.paymentId;
+  res.json(items.find((item) => item.id === id) ?? { id });
 });
 
 router.get("/customers", async (req, res) => {
