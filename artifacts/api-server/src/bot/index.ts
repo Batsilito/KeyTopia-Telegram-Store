@@ -920,21 +920,49 @@ async function acceptWalletTopUpTransactionId(
     return true;
   }
 
-  const topUp = await db.transaction(async (tx) => {
-    await tx
-      .update(walletTopUps)
-      .set({ status: "cancelled", updatedAt: new Date() })
-      .where(and(eq(walletTopUps.userId, user.id), eq(walletTopUps.status, "pending")));
-    const created = await tx
-      .insert(walletTopUps)
-      .values({
-        userId: user.id,
-        amountUsd: draft.amount!.toFixed(2),
-        submittedTransactionId,
-      })
-      .returning({ id: walletTopUps.id });
-    return created[0];
-  });
+  const existing = await db
+    .select({ id: walletTopUps.id })
+    .from(walletTopUps)
+    .where(eq(walletTopUps.submittedTransactionId, submittedTransactionId))
+    .limit(1);
+  if (existing[0]) {
+    walletTopUpDrafts.delete(user.id);
+    await ctx.reply(t(languageOf(user), "transactionAlreadySubmitted"), {
+      reply_markup: customerKeyboard(languageOf(user)),
+    });
+    return true;
+  }
+
+  let topUp: { id: string } | undefined;
+  try {
+    topUp = await db.transaction(async (tx) => {
+      await tx
+        .update(walletTopUps)
+        .set({ status: "cancelled", updatedAt: new Date() })
+        .where(and(eq(walletTopUps.userId, user.id), eq(walletTopUps.status, "pending")));
+      const created = await tx
+        .insert(walletTopUps)
+        .values({
+          userId: user.id,
+          amountUsd: draft.amount!.toFixed(2),
+          submittedTransactionId,
+        })
+        .returning({ id: walletTopUps.id });
+      return created[0];
+    });
+  } catch (error) {
+    const code =
+      error && typeof error === "object" && "code" in error
+        ? (error as { code?: unknown }).code
+        : undefined;
+    if (code !== "23505") throw error;
+
+    walletTopUpDrafts.delete(user.id);
+    await ctx.reply(t(languageOf(user), "transactionAlreadySubmitted"), {
+      reply_markup: customerKeyboard(languageOf(user)),
+    });
+    return true;
+  }
   walletTopUpDrafts.delete(user.id);
   if (!topUp) {
     await ctx.reply(t(languageOf(user), "error"));
