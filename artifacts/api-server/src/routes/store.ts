@@ -395,7 +395,9 @@ router.post("/inventory", async (req, res) => {
   if (!admin || admin.role !== "super_admin") return res;
   const parsed = ImportInventoryBody.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid inventory import" });
-  const values = parsed.data.values;
+  const submittedValues = parsed.data.values.map((value) => value.trim()).filter(Boolean);
+  const values = Array.from(new Set(submittedValues));
+  if (values.length === 0) return res.status(400).json({ error: "At least one inventory value is required" });
   const hashes = values.map((value) => createValueHash(value));
   const existing = await db
     .select({ valueHash: inventoryItems.valueHash })
@@ -420,7 +422,7 @@ router.post("/inventory", async (req, res) => {
     .where(and(eq(inventoryItems.productId, parsed.data.productId), eq(inventoryItems.status, "available")));
   res.status(201).json({
     imported: fresh.length,
-    skippedDuplicates: values.length - fresh.length,
+    skippedDuplicates: submittedValues.length - fresh.length,
     available: Number(available[0]?.total ?? 0),
   });
 });
