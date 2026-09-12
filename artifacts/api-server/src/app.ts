@@ -33,7 +33,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 app.use("/api", router);
-app.post("/telegram/webhook", async (req, res, next) => {
+app.post(["/telegram/webhook", "/api/telegram/webhook"], async (req, res, next) => {
   const expected = process.env.TELEGRAM_WEBHOOK_SECRET;
   if (expected && req.header("x-telegram-bot-api-secret-token") !== expected) {
     res.status(401).send("Unauthorized");

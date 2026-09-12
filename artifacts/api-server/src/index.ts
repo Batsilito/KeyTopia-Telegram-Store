@@ -24,10 +24,14 @@ app.listen(port, (err) => {
 
   logger.info({ port }, "Server listening");
   const bot = buildTelegramBot();
-  startStoreNotificationScheduler();
   const developmentPollingEnabled =
     process.env.NODE_ENV !== "production" &&
     process.env.TELEGRAM_DEV_POLLING === "true";
+  const backgroundJobsEnabled =
+    process.env.NODE_ENV === "production" || developmentPollingEnabled;
+  if (backgroundJobsEnabled) {
+    startStoreNotificationScheduler();
+  }
   if (bot && developmentPollingEnabled) {
     void (async () => {
       try {

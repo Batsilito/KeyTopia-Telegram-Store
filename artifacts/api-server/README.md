@@ -32,7 +32,7 @@ For production, set `NODE_ENV=production`, add both Telegram secrets, and
 configure the bot webhook to:
 
 ```text
-POST https://<published-host>/telegram/webhook
+POST https://<published-host>/api/telegram/webhook
 ```
 
 Use the same value from `TELEGRAM_WEBHOOK_SECRET` when calling Telegram's

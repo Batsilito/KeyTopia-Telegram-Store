@@ -1,3 +1,4 @@
 - [Telegram bot bundling](grammy-bundling.md) — keep grammY external to the API esbuild bundle so its optional Node platform module resolves at runtime.
+- [Telegram webhook routing](telegram-webhook-routing.md) — in this multi-artifact deployment, external Telegram callbacks must use the API artifact’s `/api` prefix.
 - [Store schema database](neon-schema-migrations.md) — this app’s runtime schema is on Neon_Connection; the separate Replit database is not the store database.
 - [Binance SAPI runtime restriction](binance-sapi-runtime.md) — official Binance hosts return HTTP 451 from the current runtime; never auto-approve without verified history.
