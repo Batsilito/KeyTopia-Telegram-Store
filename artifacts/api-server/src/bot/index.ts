@@ -27,6 +27,7 @@ import { t, type BotLanguage } from "./locales";
 
 export const telegramBotToken = process.env.TELEGRAM_BOT_TOKEN;
 export const telegramBot = telegramBotToken ? new Bot(telegramBotToken) : null;
+let binanceProcessingPromise: Promise<void> | null = null;
 
 function languageOf(user: typeof users.$inferSelect): BotLanguage {
   return user.language;
@@ -380,35 +381,58 @@ export async function notifyDueFlashSales() {
   }
 }
 
-export async function processBinancePayments() {
-  if (!telegramBot) return;
-  const confirmedPayments = await pollBinancePayments();
-  for (const payment of confirmedPayments) {
-    try {
-      if (payment.kind === "order") {
-        await issueReferralRewardForOrder({
-          id: payment.orderId,
-          userId: payment.userId,
-          orderNumber: payment.orderNumber,
-        });
-        await notifyOrderConfirmed(payment.orderId);
-      } else {
-        await telegramBot.api.sendMessage(
-          payment.telegramUserId,
-          t(payment.language, "topUpConfirmed").replace(
-            "{amount}",
-            Number(payment.amountUsd).toFixed(2),
-          ),
-          { parse_mode: "HTML", reply_markup: customerKeyboard(payment.language) },
+export function processBinancePayments() {
+  if (!telegramBot) return Promise.resolve();
+  if (binanceProcessingPromise) return binanceProcessingPromise;
+
+  const run = (async () => {
+    const confirmedPayments = await pollBinancePayments();
+    for (const payment of confirmedPayments) {
+      try {
+        if (payment.kind === "order") {
+          await issueReferralRewardForOrder({
+            id: payment.orderId,
+            userId: payment.userId,
+            orderNumber: payment.orderNumber,
+          });
+          await notifyOrderConfirmed(payment.orderId);
+        } else {
+          await telegramBot!.api.sendMessage(
+            payment.telegramUserId,
+            t(payment.language, "topUpConfirmed").replace(
+              "{amount}",
+              Number(payment.amountUsd).toFixed(2),
+            ),
+            { parse_mode: "HTML", reply_markup: customerKeyboard(payment.language) },
+          );
+        }
+      } catch (error) {
+        logger.warn(
+          { err: error, telegramUserId: payment.telegramUserId, transactionId: payment.transactionId },
+          "Unable to finalize Binance payment",
         );
       }
-    } catch (error) {
-      logger.warn(
-        { err: error, telegramUserId: payment.telegramUserId, transactionId: payment.transactionId },
-        "Unable to finalize Binance payment",
-      );
     }
-  }
+  })();
+
+  binanceProcessingPromise = run;
+  void run.then(
+    () => {
+      if (binanceProcessingPromise === run) binanceProcessingPromise = null;
+    },
+    () => {
+      if (binanceProcessingPromise === run) binanceProcessingPromise = null;
+    },
+  );
+  return run;
+}
+
+function scheduleBinancePaymentProcessing() {
+  setTimeout(() => {
+    void processBinancePayments().catch((error) => {
+      logger.error({ err: error }, "Deferred Binance payment check failed");
+    });
+  }, 250);
 }
 
 async function recoverOrderNotifications() {
@@ -869,9 +893,7 @@ async function acceptWalletTopUpTransactionId(
   await ctx.reply(t(languageOf(user), "topUpPending"), {
     reply_markup: customerKeyboard(languageOf(user)),
   });
-  void processBinancePayments().catch((error) => {
-    logger.error({ err: error }, "Immediate Binance top-up check failed");
-  });
+  scheduleBinancePaymentProcessing();
   return true;
 }
 
@@ -1421,9 +1443,7 @@ async function acceptPaymentReference(ctx: Context, user: typeof users.$inferSel
   });
   await ctx.reply(t(languageOf(user), "paymentSubmitted"), { reply_markup: customerKeyboard(languageOf(user)) });
   if (checkout[0].paymentMethod === "binance") {
-    void processBinancePayments().catch((error) => {
-      logger.error({ err: error }, "Immediate Binance payment check failed");
-    });
+    scheduleBinancePaymentProcessing();
   }
   return true;
 }
