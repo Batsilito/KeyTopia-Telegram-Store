@@ -21,7 +21,7 @@ import {
   users,
 } from "@workspace/db";
 import { logger } from "../lib/logger";
-import { pollBinanceWalletTopUps } from "../lib/binance-topups";
+import { pollBinancePayments } from "../lib/binance-topups";
 import { t, type BotLanguage } from "./locales";
 
 export const telegramBotToken = process.env.TELEGRAM_BOT_TOKEN;
@@ -222,18 +222,28 @@ export function startStoreNotificationScheduler() {
   if (!telegramBot) return;
   const run = async () => {
     await notifyDueFlashSales();
-    const confirmedTopUps = await pollBinanceWalletTopUps();
-    for (const topUp of confirmedTopUps) {
+    const confirmedPayments = await pollBinancePayments();
+    for (const payment of confirmedPayments) {
       try {
+        if (payment.kind === "order") {
+          await issueReferralRewardForOrder({
+            id: payment.orderId,
+            userId: payment.userId,
+            orderNumber: payment.orderNumber,
+          });
+        }
+        const message = payment.kind === "wallet"
+          ? t(payment.language, "topUpConfirmed").replace("{amount}", Number(payment.amountUsd).toFixed(2))
+          : t(payment.language, "orderPaymentConfirmed").replace("{order}", escapeHtml(payment.orderNumber));
         await telegramBot.api.sendMessage(
-          topUp.telegramUserId,
-          t(topUp.language, "topUpConfirmed").replace("{amount}", Number(topUp.amountUsd).toFixed(2)),
-          { reply_markup: customerKeyboard(topUp.language) },
+          payment.telegramUserId,
+          message,
+          { parse_mode: "HTML", reply_markup: customerKeyboard(payment.language) },
         );
       } catch (error) {
         logger.warn(
-          { err: error, telegramUserId: topUp.telegramUserId, transactionId: topUp.transactionId },
-          "Unable to send Binance top-up confirmation",
+          { err: error, telegramUserId: payment.telegramUserId, transactionId: payment.transactionId },
+          "Unable to send Binance payment confirmation",
         );
       }
     }
@@ -508,17 +518,34 @@ async function showWalletPaymentMethod(
     return;
   }
   const instructions = language === "ar" ? config[0].instructionsAr : config[0].instructionsEn;
-  const details = [
-    `<b>${t(language, "topUpInstructions")}</b>`,
-    "",
-    `<b>${escapeHtml(paymentMethodLabel(method))}</b>`,
-    instructions,
-    amount !== undefined ? `${t(language, "topUpAmount")}: ${amount.toFixed(2)} USDT` : "",
-    config[0].paymentIdentifier ? `Recipient: ${escapeHtml(config[0].paymentIdentifier)}` : "",
-    method === "binance" && amount !== undefined ? t(language, "topUpPending") : "",
-    "",
-    t(language, "support"),
-  ].filter(Boolean).join("\n");
+  const recipientUid = config[0].paymentIdentifier?.trim();
+  const details = method === "binance" && amount !== undefined && recipientUid
+    ? [
+        `<b>${t(language, "topUpInstructions")}</b>`,
+        "",
+        `<b>${t(language, "binancePaymentTitle")}</b>`,
+        "",
+        `💵 <b>${t(language, "binanceAmountLabel")}:</b> <code>${amount.toFixed(2)} USDT</code>`,
+        `👤 <b>${t(language, "binanceRecipientLabel")}:</b>`,
+        `<code>${escapeHtml(recipientUid)}</code>`,
+        "",
+        t(language, "binanceCopyHint"),
+        t(language, "binanceTransferStep"),
+        t(language, "binanceTransactionStep"),
+        "",
+        t(language, "topUpPending"),
+        instructions ? `\n${escapeHtml(instructions)}` : "",
+      ].filter(Boolean).join("\n")
+    : [
+        `<b>${t(language, "topUpInstructions")}</b>`,
+        "",
+        `<b>${escapeHtml(paymentMethodLabel(method))}</b>`,
+        escapeHtml(instructions),
+        amount !== undefined ? `${t(language, "topUpAmount")}: ${amount.toFixed(2)} USDT` : "",
+        recipientUid ? `Recipient: ${escapeHtml(recipientUid)}` : "",
+        "",
+        t(language, "support"),
+      ].filter(Boolean).join("\n");
   await ctx.reply(details, {
     parse_mode: "HTML",
     reply_markup: new InlineKeyboard().text(t(language, "backToWallet"), "nav:wallet"),
@@ -1003,14 +1030,34 @@ async function showPayment(ctx: Context, user: typeof users.$inferSelect, checko
     return;
   }
   const instructions = language === "ar" ? config[0].instructionsAr : config[0].instructionsEn;
-  const details = [
-    t(language, "paymentInstructions"),
-    instructions,
-    `Reference: ${checkout[0].reference}`,
-    `${t(language, "quantity")}: ${checkout[0].quantity}`,
-    `${t(language, "price")}: ${checkout[0].priceUsd} USDT`,
-    config[0].paymentIdentifier ? `Recipient: ${config[0].paymentIdentifier}` : "",
-  ].filter(Boolean).join("\n");
+  const recipientUid = config[0].paymentIdentifier?.trim();
+  const details = method === "binance" && recipientUid
+    ? [
+        `<b>${t(language, "paymentInstructions")}</b>`,
+        "",
+        `<b>${t(language, "binancePaymentTitle")}</b>`,
+        "",
+        `💵 <b>${t(language, "binanceAmountLabel")}:</b> <code>${Number(checkout[0].priceUsd).toFixed(2)} USDT</code>`,
+        `👤 <b>${t(language, "binanceRecipientLabel")}:</b>`,
+        `<code>${escapeHtml(recipientUid)}</code>`,
+        "",
+        t(language, "binanceCopyHint"),
+        t(language, "binanceTransferStep"),
+        t(language, "binanceTransactionStep"),
+        "",
+        `🧾 <b>${t(language, "shopOrder")}:</b> <code>${escapeHtml(checkout[0].reference)}</code>`,
+        `➕ <b>${t(language, "quantity")}:</b> ${checkout[0].quantity}`,
+        `⏱ <b>${t(language, "paymentWindow")}:</b> 5 minutes`,
+        instructions ? `\n${escapeHtml(instructions)}` : "",
+      ].filter(Boolean).join("\n")
+    : [
+        t(language, "paymentInstructions"),
+        escapeHtml(instructions),
+        `Reference: ${escapeHtml(checkout[0].reference)}`,
+        `${t(language, "quantity")}: ${checkout[0].quantity}`,
+        `${t(language, "price")}: ${checkout[0].priceUsd} USDT`,
+        recipientUid ? `Recipient: ${escapeHtml(recipientUid)}` : "",
+      ].filter(Boolean).join("\n");
   const logoPath = paymentLogoPath(method);
   if (logoPath) {
     await ctx.replyWithPhoto(new InputFile(logoPath), {
@@ -1023,6 +1070,10 @@ async function showPayment(ctx: Context, user: typeof users.$inferSelect, checko
 async function acceptPaymentReference(ctx: Context, user: typeof users.$inferSelect, reference: string) {
   const checkout = await db.select().from(checkoutSessions).where(and(eq(checkoutSessions.userId, user.id), eq(checkoutSessions.status, "pending"), gt(checkoutSessions.expiresAt, new Date()))).orderBy(desc(checkoutSessions.createdAt)).limit(1);
   if (!checkout[0] || !checkout[0].paymentMethod) return false;
+  if (checkout[0].paymentMethod === "binance" && !/^[A-Za-z0-9_-]{6,128}$/.test(reference.trim())) {
+    await ctx.reply(t(languageOf(user), "invalidBinanceTransactionId"));
+    return true;
+  }
   const existing = await db.select({ id: payments.id }).from(payments).where(eq(payments.transactionReference, reference)).limit(1);
   if (existing.length > 0) {
     await ctx.reply(t(languageOf(user), "error"));
@@ -1188,7 +1239,22 @@ export function buildTelegramBot() {
       return;
     }
     if (data.startsWith("paid:")) {
-      await ctx.reply(t(languageOf(user), "enterReference"));
+      const checkout = await db
+        .select({ paymentMethod: checkoutSessions.paymentMethod })
+        .from(checkoutSessions)
+        .where(
+          and(
+            eq(checkoutSessions.id, data.slice("paid:".length)),
+            eq(checkoutSessions.userId, user.id),
+            eq(checkoutSessions.status, "pending"),
+          ),
+        )
+        .limit(1);
+      await ctx.reply(
+        checkout[0]?.paymentMethod === "binance"
+          ? t(languageOf(user), "enterBinanceTransactionId")
+          : t(languageOf(user), "enterReference"),
+      );
     }
   });
   bot.on("message:text", async (ctx) => {
