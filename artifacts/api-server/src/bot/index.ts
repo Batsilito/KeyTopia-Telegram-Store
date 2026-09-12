@@ -301,6 +301,7 @@ function paymentMethodDescription(method: string, language: BotLanguage) {
 }
 
 const supportDraftUsers = new Set<string>();
+const walletTopUpDrafts = new Map<string, "binance">();
 
 function createSupportTicketNumber() {
   return `KT-${Date.now().toString(36).toUpperCase()}-${randomBytes(3).toString("hex").toUpperCase()}`;
@@ -403,6 +404,7 @@ async function showHome(ctx: Context, user: typeof users.$inferSelect) {
 
 async function showWallet(ctx: Context, user: typeof users.$inferSelect) {
   if (!(await ensureAccess(ctx, user))) return;
+  walletTopUpDrafts.delete(user.id);
   const language = languageOf(user);
   const rows = await db
     .select({ balance: sum(walletTransactions.amountUsd) })
@@ -441,6 +443,7 @@ async function showWalletPaymentMethod(
   ctx: Context,
   user: typeof users.$inferSelect,
   method: "binance" | "bybit" | "vodafone_cash" | "instapay",
+  amount?: number,
 ) {
   if (!(await ensureAccess(ctx, user))) return;
   const language = languageOf(user);
@@ -459,6 +462,7 @@ async function showWalletPaymentMethod(
     "",
     `<b>${escapeHtml(paymentMethodLabel(method))}</b>`,
     instructions,
+    amount !== undefined ? `${t(language, "topUpAmount")}: ${amount.toFixed(2)} USDT` : "",
     config[0].paymentIdentifier ? `Recipient: ${escapeHtml(config[0].paymentIdentifier)}` : "",
     "",
     t(language, "support"),
@@ -467,6 +471,32 @@ async function showWalletPaymentMethod(
     parse_mode: "HTML",
     reply_markup: new InlineKeyboard().text(t(language, "backToWallet"), "nav:wallet"),
   });
+}
+
+async function beginWalletTopUp(ctx: Context, user: typeof users.$inferSelect) {
+  walletTopUpDrafts.set(user.id, "binance");
+  const language = languageOf(user);
+  await ctx.reply(t(language, "enterTopUpAmount"), {
+    reply_markup: new InlineKeyboard().text(t(language, "backToWallet"), "nav:wallet"),
+  });
+}
+
+async function acceptWalletTopUpAmount(ctx: Context, user: typeof users.$inferSelect, value: string) {
+  const method = walletTopUpDrafts.get(user.id);
+  if (!method) return false;
+  const normalized = value.trim().replace(",", ".");
+  if (!/^\d+(?:\.\d{1,2})?$/.test(normalized)) {
+    await ctx.reply(t(languageOf(user), "invalidTopUpAmount"));
+    return true;
+  }
+  const amount = Number(normalized);
+  if (!Number.isFinite(amount) || amount <= 0 || amount > 100000) {
+    await ctx.reply(t(languageOf(user), "invalidTopUpAmount"));
+    return true;
+  }
+  walletTopUpDrafts.delete(user.id);
+  await showWalletPaymentMethod(ctx, user, method, amount);
+  return true;
 }
 
 async function showSupport(ctx: Context, user: typeof users.$inferSelect) {
@@ -899,7 +929,9 @@ export function buildTelegramBot() {
       return;
     }
     if (data.startsWith("wallet:method:")) {
-      await showWalletPaymentMethod(ctx, user, data.slice("wallet:method:".length) as "binance" | "bybit" | "vodafone_cash" | "instapay");
+      const method = data.slice("wallet:method:".length) as "binance" | "bybit" | "vodafone_cash" | "instapay";
+      if (method === "binance") await beginWalletTopUp(ctx, user);
+      else await showWalletPaymentMethod(ctx, user, method);
       return;
     }
     if (data === "nav:shop") {
@@ -970,6 +1002,7 @@ export function buildTelegramBot() {
     if (!user) return;
     if (await acceptSupportMessage(ctx, user, ctx.message.text)) return;
     if (await acceptPaymentReference(ctx, user, ctx.message.text)) return;
+    if (await acceptWalletTopUpAmount(ctx, user, ctx.message.text)) return;
     const language = languageOf(user);
     if (ctx.message.text === t(language, "shop")) await showShop(ctx, user);
     else if (ctx.message.text === t(language, "wallet")) await showWallet(ctx, user);
