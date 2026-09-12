@@ -67,6 +67,7 @@ import {
   notifyOrderDelivered,
   sendSupportReply,
 } from "../bot";
+import { testBinanceApiConnectivity } from "../lib/binance-topups";
 
 const router: IRouter = Router();
 
@@ -236,6 +237,13 @@ router.get("/dashboard/overview", async (req, res) => {
     recentPayments,
     recentTickets,
   });
+});
+
+router.get("/diagnostics/binance", async (req, res): Promise<void> => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const result = await testBinanceApiConnectivity();
+  res.json(result);
 });
 
 router.get("/products", async (req, res) => {

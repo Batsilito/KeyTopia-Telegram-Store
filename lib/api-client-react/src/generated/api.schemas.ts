@@ -9,6 +9,28 @@ export interface HealthStatus {
   status: string;
 }
 
+export interface BinanceApiHostDiagnostic {
+  host: string;
+  /** @nullable */
+  publicStatus: number | null;
+  publicReachable: boolean;
+  /** @nullable */
+  payHistoryStatus: number | null;
+  payHistoryAccepted: boolean;
+  /** @nullable */
+  payHistoryCode: string | null;
+  /** @nullable */
+  message: string | null;
+  /** @nullable */
+  error: string | null;
+}
+
+export interface BinanceApiDiagnostics {
+  testedAt: string;
+  reachable: boolean;
+  hosts: BinanceApiHostDiagnostic[];
+}
+
 export type AdminRole = typeof AdminRole[keyof typeof AdminRole];
 
 

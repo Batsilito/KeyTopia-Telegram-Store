@@ -20,6 +20,7 @@ tags:
   - name: promotions
   - name: settings
   - name: analytics
+  - name: diagnostics
 paths:
   /healthz:
     get:
@@ -33,6 +34,20 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /diagnostics/binance:
+    get:
+      operationId: getBinanceDiagnostics
+      tags: [diagnostics]
+      summary: Test Binance API connectivity from the server runtime
+      responses:
+        "200":
+          description: Binance connectivity results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BinanceApiDiagnostics"
+        "401":
+          description: Authentication required
   /auth/session:
     get:
       operationId: getAdminSession
@@ -620,6 +635,28 @@ components:
       properties:
         status: { type: string }
       required: [status]
+    BinanceApiDiagnostics:
+      type: object
+      properties:
+        testedAt: { type: string, format: date-time }
+        reachable: { type: boolean }
+        hosts:
+          type: array
+          items:
+            $ref: "#/components/schemas/BinanceApiHostDiagnostic"
+      required: [testedAt, reachable, hosts]
+    BinanceApiHostDiagnostic:
+      type: object
+      properties:
+        host: { type: string }
+        publicStatus: { type: ["integer", "null"] }
+        publicReachable: { type: boolean }
+        payHistoryStatus: { type: ["integer", "null"] }
+        payHistoryAccepted: { type: boolean }
+        payHistoryCode: { type: ["string", "null"] }
+        message: { type: ["string", "null"] }
+        error: { type: ["string", "null"] }
+      required: [host, publicStatus, publicReachable, payHistoryStatus, payHistoryAccepted, payHistoryCode, message, error]
     Admin:
       type: object
       properties:

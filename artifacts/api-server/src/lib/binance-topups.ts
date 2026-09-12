@@ -23,6 +23,17 @@ const BINANCE_API_BASE_URLS = [
 const POLL_LOOKBACK_MS = 15 * 60 * 1000;
 const MAX_PENDING_PAYMENTS = 100;
 
+export type BinanceApiHostDiagnostic = {
+  host: string;
+  publicStatus: number | null;
+  publicReachable: boolean;
+  payHistoryStatus: number | null;
+  payHistoryAccepted: boolean;
+  payHistoryCode: string | null;
+  message: string | null;
+  error: string | null;
+};
+
 type BinancePayTransaction = {
   orderType?: string;
   transactionId?: string;
@@ -130,6 +141,86 @@ async function getPayHistory(startTime: number, endTime: number) {
     }
   }
   throw new Error(`Binance Pay history request failed: ${errors.join("; ")}`);
+}
+
+export async function testBinanceApiConnectivity() {
+  const apiKey = process.env.BINANCE_API_KEY;
+  const apiSecret = process.env.BINANCE_API_SECRET;
+  const testedAt = new Date().toISOString();
+
+  const hosts = await Promise.all(
+    BINANCE_API_BASE_URLS.map(async (baseUrl): Promise<BinanceApiHostDiagnostic> => {
+      const host = new URL(baseUrl).hostname;
+      const diagnostic: BinanceApiHostDiagnostic = {
+        host,
+        publicStatus: null,
+        publicReachable: false,
+        payHistoryStatus: null,
+        payHistoryAccepted: false,
+        payHistoryCode: null,
+        message: null,
+        error: null,
+      };
+
+      try {
+        const publicResponse = await fetch(`${baseUrl}/api/v3/time`, {
+          signal: AbortSignal.timeout(10_000),
+        });
+        diagnostic.publicStatus = publicResponse.status;
+        diagnostic.publicReachable = publicResponse.ok;
+      } catch (error) {
+        diagnostic.error = error instanceof Error ? error.message : "Public request failed";
+      }
+
+      if (!apiKey || !apiSecret) {
+        diagnostic.error ??= "Binance credentials are not configured";
+        return diagnostic;
+      }
+
+      try {
+        const now = Date.now();
+        const params = new URLSearchParams({
+          endTime: String(now + 5_000),
+          limit: "1",
+          recvWindow: "10000",
+          startTime: String(now - POLL_LOOKBACK_MS),
+          timestamp: String(now),
+        });
+        params.set(
+          "signature",
+          createHmac("sha256", apiSecret).update(params.toString()).digest("hex"),
+        );
+        const response = await fetch(
+          `${baseUrl}/sapi/v1/pay/transactions?${params.toString()}`,
+          {
+            headers: { "X-MBX-APIKEY": apiKey },
+            signal: AbortSignal.timeout(10_000),
+          },
+        );
+        const body = (await response.json().catch(() => ({}))) as {
+          code?: string | number;
+          message?: string;
+          msg?: string;
+        };
+        diagnostic.payHistoryStatus = response.status;
+        diagnostic.payHistoryAccepted = response.ok && body.code === "000000";
+        diagnostic.payHistoryCode =
+          body.code === undefined ? null : String(body.code);
+        diagnostic.message = body.message ?? body.msg ?? null;
+      } catch (error) {
+        diagnostic.error =
+          error instanceof Error ? error.message : "Signed request failed";
+      }
+
+      return diagnostic;
+    }),
+  );
+
+  return {
+    testedAt,
+    reachable: hosts.some((host) => host.payHistoryAccepted),
+    hosts,
+  };
 }
 
 async function verifyThroughRailway(

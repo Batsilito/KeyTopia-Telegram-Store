@@ -17,6 +17,25 @@ export const HealthCheckResponse = zod.object({
 
 
 /**
+ * @summary Test Binance API connectivity from the server runtime
+ */
+export const GetBinanceDiagnosticsResponse = zod.object({
+  "testedAt": zod.coerce.date(),
+  "reachable": zod.boolean(),
+  "hosts": zod.array(zod.object({
+  "host": zod.string(),
+  "publicStatus": zod.number().int().nullable(),
+  "publicReachable": zod.boolean(),
+  "payHistoryStatus": zod.number().int().nullable(),
+  "payHistoryAccepted": zod.boolean(),
+  "payHistoryCode": zod.string().nullable(),
+  "message": zod.string().nullable(),
+  "error": zod.string().nullable()
+}))
+})
+
+
+/**
  * @summary Get the current admin session
  */
 export const GetAdminSessionResponse = zod.object({

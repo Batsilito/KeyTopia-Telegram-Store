@@ -23,6 +23,7 @@ import type {
   AdminLoginInput,
   AdminSession,
   AnalyticsSummary,
+  BinanceApiDiagnostics,
   CustomerPage,
   DashboardOverview,
   DeliveryInput,
@@ -155,6 +156,83 @@ export function useHealthCheck<TData = Awaited<ReturnType<typeof healthCheck>>, 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getHealthCheckQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetBinanceDiagnosticsUrl = () => {
+
+
+
+
+  return `/api/diagnostics/binance`
+}
+
+/**
+ * @summary Test Binance API connectivity from the server runtime
+ */
+export const getBinanceDiagnostics = async ( options?: Parameters<typeof customFetch>[1]): Promise<BinanceApiDiagnostics> => {
+
+  return customFetch<BinanceApiDiagnostics>(getGetBinanceDiagnosticsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetBinanceDiagnosticsQueryKey = () => {
+    return [
+    `/api/diagnostics/binance`
+    ] as const;
+    }
+
+
+export const getGetBinanceDiagnosticsQueryOptions = <TData = Awaited<ReturnType<typeof getBinanceDiagnostics>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getBinanceDiagnostics>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetBinanceDiagnosticsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getBinanceDiagnostics>>> = ({ signal }) => getBinanceDiagnostics({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getBinanceDiagnostics>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetBinanceDiagnosticsQueryResult = NonNullable<Awaited<ReturnType<typeof getBinanceDiagnostics>>>
+export type GetBinanceDiagnosticsQueryError = ErrorType<void>
+
+
+/**
+ * @summary Test Binance API connectivity from the server runtime
+ */
+
+export function useGetBinanceDiagnostics<TData = Awaited<ReturnType<typeof getBinanceDiagnostics>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getBinanceDiagnostics>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetBinanceDiagnosticsQueryOptions(options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

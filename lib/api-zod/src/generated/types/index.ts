@@ -11,6 +11,8 @@ export * from './adminLoginInput';
 export * from './adminRole';
 export * from './adminSession';
 export * from './analyticsSummary';
+export * from './binanceApiDiagnostics';
+export * from './binanceApiHostDiagnostic';
 export * from './customer';
 export * from './customerLanguage';
 export * from './customerPage';
