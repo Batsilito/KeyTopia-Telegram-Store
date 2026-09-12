@@ -13,6 +13,11 @@ import {
   walletTransactions,
 } from "@workspace/db";
 import { logger } from "./logger";
+import {
+  BINANCE_VERIFICATION_GRACE_MS,
+  evaluateBinancePayment,
+  type BinancePayTransaction,
+} from "./binance-verification";
 
 const BINANCE_API_BASE_URLS = [
   "https://api.binance.com",
@@ -21,7 +26,6 @@ const BINANCE_API_BASE_URLS = [
   "https://api2.binance.com",
 ] as const;
 const POLL_LOOKBACK_MS = 15 * 60 * 1000;
-const BINANCE_VERIFICATION_GRACE_MS = 5 * 60 * 1000;
 const MAX_PENDING_PAYMENTS = 100;
 
 export type BinanceApiHostDiagnostic = {
@@ -33,19 +37,6 @@ export type BinanceApiHostDiagnostic = {
   payHistoryCode: string | null;
   message: string | null;
   error: string | null;
-};
-
-type BinancePayTransaction = {
-  orderType?: string;
-  transactionId?: string;
-  transactionTime?: number;
-  amount?: string;
-  currency?: string;
-  success?: boolean;
-  receiverInfo?: {
-    binanceId?: string;
-    type?: string;
-  };
 };
 
 type BinancePayHistoryResponse = {
@@ -89,14 +80,6 @@ export type FailedBinancePayment = CustomerNotification & {
 export type BinancePaymentProcessingResult =
   | ConfirmedBinancePayment
   | FailedBinancePayment;
-
-function amountInCents(value: string | number) {
-  const normalized = String(value).trim();
-  if (!/^\d+(?:\.\d+)?$/.test(normalized)) return null;
-  const [whole, fraction = ""] = normalized.split(".");
-  const cents = Number(`${whole}${fraction.padEnd(2, "0").slice(0, 2)}`);
-  return Number.isSafeInteger(cents) ? cents : null;
-}
 
 async function getReceivingBinanceUid() {
   const configured = await db
@@ -262,28 +245,6 @@ async function verifyThroughRailway(
     throw new Error(`Remote Binance verifier failed: ${body.error ?? response.statusText}`);
   }
   return body.verified === true;
-}
-
-function matchesTransaction(
-  transaction: BinancePayTransaction,
-  candidate: { transactionId: string; amountUsd: string; requestedAt: Date },
-  receivingUid: string,
-) {
-  const expectedCents = amountInCents(candidate.amountUsd);
-  const transactionCents = amountInCents(transaction.amount ?? "");
-  return Boolean(
-    transaction.transactionId === candidate.transactionId &&
-      transaction.orderType === "C2C" &&
-      transaction.success !== false &&
-      transaction.transactionTime &&
-      transaction.transactionTime >= candidate.requestedAt.getTime() - 60_000 &&
-      transaction.currency === "USDT" &&
-      transactionCents !== null &&
-      expectedCents !== null &&
-      transactionCents === expectedCents &&
-      transactionCents > 0 &&
-      String(transaction.receiverInfo?.binanceId ?? "") === receivingUid,
-  );
 }
 
 async function confirmWalletTopUp(
@@ -696,17 +657,27 @@ export async function pollBinancePayments(): Promise<BinancePaymentProcessingRes
   );
   if (!transactions) return [];
 
+  const claimedTransactionIds = new Set(
+    (
+      await db
+        .select({ transactionId: binanceTransactionClaims.transactionId })
+        .from(binanceTransactionClaims)
+    ).map((claim) => claim.transactionId),
+  );
   const processed: BinancePaymentProcessingResult[] = [];
   const now = Date.now();
   for (const candidate of candidates) {
     if (usedTransactionIds.has(candidate.transactionId)) continue;
-    const match = transactions.find((transaction) =>
-      matchesTransaction(transaction, candidate, receivingUid),
+    const decision = evaluateBinancePayment(
+      candidate,
+      transactions,
+      receivingUid,
+      now,
+      new Set([...claimedTransactionIds, ...usedTransactionIds]),
     );
-    if (!match?.transactionId) {
-      if (now - candidate.requestedAt.getTime() < BINANCE_VERIFICATION_GRACE_MS) continue;
-      const reason =
-        "No Binance record matched the submitted transaction ID, amount, currency, recipient, and payment type.";
+    if (decision.status === "pending") continue;
+    if (decision.status === "failed") {
+      const reason = decision.reason;
       const failed =
         candidate.kind === "wallet"
           ? await failWalletTopUp(candidate.record, reason)
@@ -722,45 +693,29 @@ export async function pollBinancePayments(): Promise<BinancePaymentProcessingRes
       if (failed) processed.push(failed);
       continue;
     }
-    if (await hasClaimedTransaction(match.transactionId)) {
-      const reason = "This Binance transaction ID has already been used for another payment.";
-      const failed =
-        candidate.kind === "wallet"
-          ? await failWalletTopUp(candidate.record, reason)
-          : await failProductPayment(
-              {
-                id: candidate.record.id,
-                userId: candidate.record.userId,
-                amountUsd: candidate.amountUsd,
-                submittedTransactionId: candidate.transactionId,
-              },
-              reason,
-            );
-      if (failed) processed.push(failed);
-      continue;
-    }
+    const match = decision.transactionId;
 
     if (candidate.kind === "wallet") {
-      const result = await confirmWalletTopUp(candidate.record, match.transactionId);
+      const result = await confirmWalletTopUp(candidate.record, match);
       if (result) {
-        usedTransactionIds.add(match.transactionId);
+        usedTransactionIds.add(match);
         processed.push({
           kind: "wallet",
           ...result,
           amountUsd: candidate.amountUsd,
-          transactionId: match.transactionId,
+          transactionId: match,
         });
       }
     } else {
-      const result = await confirmProductPayment(candidate.record, match.transactionId);
+      const result = await confirmProductPayment(candidate.record, match);
       if (result) {
-        usedTransactionIds.add(match.transactionId);
+        usedTransactionIds.add(match);
         processed.push({
           kind: "order",
           telegramUserId: result.telegramUserId,
           language: result.language,
           amountUsd: candidate.amountUsd,
-          transactionId: match.transactionId,
+          transactionId: match,
           orderNumber: result.order.orderNumber,
           orderId: result.order.id,
           userId: candidate.record.userId,

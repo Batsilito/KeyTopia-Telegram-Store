@@ -25,6 +25,7 @@ import {
   pollBinancePayments,
   type FailedBinancePayment,
 } from "../lib/binance-topups";
+import { createBinanceFailureNotificationPlan } from "../lib/binance-verification";
 import { fulfillAutomaticOrder } from "../lib/order-fulfillment";
 import { t, type BotLanguage } from "./locales";
 
@@ -425,13 +426,10 @@ export function processBinancePayments() {
     for (const payment of processedPayments) {
       try {
         if (payment.kind === "failure") {
-          const messageKey =
-            payment.paymentKind === "wallet"
-              ? "topUpVerificationFailed"
-              : "paymentVerificationFailed";
+          const notificationPlan = createBinanceFailureNotificationPlan(payment);
           await telegramBot!.api.sendMessage(
             payment.telegramUserId,
-            t(payment.language, messageKey)
+            t(payment.language, notificationPlan.customerMessageKey)
               .replace("{amount}", Number(payment.amountUsd).toFixed(2))
               .replace("{transaction}", escapeHtml(payment.transactionId))
               .replace("{reason}", escapeHtml(payment.reason)),
