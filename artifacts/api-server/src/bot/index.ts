@@ -31,6 +31,12 @@ function languageOf(user: typeof users.$inferSelect): BotLanguage {
 
 function customerKeyboard(language: BotLanguage) {
   return new Keyboard()
+    .text(t(language, "menu"))
+    .resized();
+}
+
+function mainMenuKeyboard(language: BotLanguage) {
+  return new Keyboard()
     .text(t(language, "shop"))
     .text(t(language, "flashSale"))
     .row()
@@ -41,8 +47,6 @@ function customerKeyboard(language: BotLanguage) {
     .text(t(language, "support"))
     .row()
     .text(t(language, "settings"))
-    .row()
-    .text(t(language, "mainMenu"))
     .resized();
 }
 
@@ -393,7 +397,7 @@ async function ensureAccess(ctx: Context, user: typeof users.$inferSelect) {
 async function showHome(ctx: Context, user: typeof users.$inferSelect) {
   const language = languageOf(user);
   await ctx.reply(t(language, "welcome"), {
-    reply_markup: customerKeyboard(language),
+    reply_markup: mainMenuKeyboard(language),
   });
 }
 
@@ -972,7 +976,7 @@ export function buildTelegramBot() {
     else if (ctx.message.text === t(language, "support")) await showSupport(ctx, user);
     else if (ctx.message.text === t(language, "refer")) await showReferral(ctx, user);
     else if (ctx.message.text === t(language, "settings")) await ctx.reply(t(language, "chooseLanguage"), { reply_markup: languageKeyboard() });
-    else if (ctx.message.text === t(language, "home") || ctx.message.text === t(language, "mainMenu")) {
+    else if (ctx.message.text === t(language, "menu") || ctx.message.text === t(language, "home") || ctx.message.text === t(language, "mainMenu")) {
       await showHome(ctx, user);
     }
   });

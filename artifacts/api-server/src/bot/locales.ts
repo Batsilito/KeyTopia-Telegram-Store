@@ -86,6 +86,7 @@ const messages = {
     orderHistory: "🎉 Order History",
     checkoutNotice: "💎 Checkout / Redeem Code Notice",
     mainMenu: "🏠 Main Menu",
+    menu: "Menu",
     comingSoon: "This section will be available soon.",
   },
   ar: {
@@ -173,6 +174,7 @@ const messages = {
     orderHistory: "🎉 سجل الطلبات",
     checkoutNotice: "💎 إشعار الدفع / استرداد الأكواد",
     mainMenu: "🏠 القائمة الرئيسية",
+    menu: "القائمة",
     comingSoon: "هذا القسم سيكون متاحاً قريباً.",
   },
 } as const;
