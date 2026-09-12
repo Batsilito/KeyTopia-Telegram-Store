@@ -85,6 +85,7 @@ function escapeHtml(value: string) {
 
 export async function sendSupportReply(
   user: typeof users.$inferSelect,
+  ticketId: string,
   ticketNumber: string,
   body: string,
 ) {
@@ -101,7 +102,10 @@ export async function sendSupportReply(
       ].join("\n"),
       {
         parse_mode: "HTML",
-        reply_markup: customerKeyboard(user.language),
+        reply_markup: new InlineKeyboard()
+          .text(t(user.language, "supportReply"), `support:ticket:${ticketId}`)
+          .row()
+          .text(t(user.language, "menu"), "nav:home"),
       },
     );
     logger.info({ ticketNumber }, "Delivered admin support reply to Telegram");
@@ -362,6 +366,7 @@ function paymentMethodDescription(method: string, language: BotLanguage) {
 }
 
 const supportDraftUsers = new Set<string>();
+const supportReplyDrafts = new Map<string, string>();
 const walletTopUpDrafts = new Map<string, { method: "binance"; amount?: number }>();
 
 function createSupportTicketNumber() {
@@ -719,6 +724,8 @@ async function showSupportTicket(ctx: Context, user: typeof users.$inferSelect, 
   }
   if (current) chunks.push(current);
   const keyboard = new InlineKeyboard()
+    .text(t(language, "supportReply"), `support:reply:${ticket.id}`)
+    .row()
     .text(t(language, "supportTickets"), "support:list")
     .row()
     .text(t(language, "supportWrite"), "support:write")
@@ -763,12 +770,34 @@ async function showReferral(ctx: Context, user: typeof users.$inferSelect) {
 }
 
 async function beginSupportMessage(ctx: Context, user: typeof users.$inferSelect) {
+  supportReplyDrafts.delete(user.id);
   supportDraftUsers.add(user.id);
   await ctx.reply(t(languageOf(user), "supportPrompt"), {
     reply_markup: new InlineKeyboard()
       .text(t(languageOf(user), "supportCancel"), "support:cancel")
       .row()
       .text(t(languageOf(user), "mainMenu"), "nav:home"),
+  });
+}
+
+async function beginSupportReply(ctx: Context, user: typeof users.$inferSelect, ticketId: string) {
+  const ticket = await db
+    .select({ id: supportTickets.id })
+    .from(supportTickets)
+    .where(and(eq(supportTickets.id, ticketId), eq(supportTickets.userId, user.id)))
+    .limit(1);
+  if (!ticket[0]) {
+    await ctx.reply(t(languageOf(user), "supportTicketNotFound"));
+    return;
+  }
+  supportDraftUsers.delete(user.id);
+  supportReplyDrafts.set(user.id, ticketId);
+  const language = languageOf(user);
+  await ctx.reply(t(language, "supportReplyPrompt"), {
+    reply_markup: new InlineKeyboard()
+      .text(t(language, "supportCancel"), `support:reply:cancel:${ticketId}`)
+      .row()
+      .text(t(language, "mainMenu"), "nav:home"),
   });
 }
 
@@ -790,6 +819,39 @@ async function acceptSupportMessage(ctx: Context, user: typeof users.$inferSelec
     parse_mode: "HTML",
     reply_markup: customerKeyboard(languageOf(user)),
   });
+  return true;
+}
+
+async function acceptSupportReply(ctx: Context, user: typeof users.$inferSelect, body: string) {
+  const ticketId = supportReplyDrafts.get(user.id);
+  if (!ticketId) return false;
+  supportReplyDrafts.delete(user.id);
+  const ticketRows = await db
+    .select()
+    .from(supportTickets)
+    .where(and(eq(supportTickets.id, ticketId), eq(supportTickets.userId, user.id)))
+    .limit(1);
+  if (!ticketRows[0]) {
+    await ctx.reply(t(languageOf(user), "supportTicketNotFound"));
+    return true;
+  }
+  const ticket = ticketRows[0];
+  await db.transaction(async (tx) => {
+    await tx.insert(supportMessages).values({
+      ticketId: ticket.id,
+      authorType: "customer",
+      body,
+    });
+    await tx
+      .update(supportTickets)
+      .set({ status: "created", updatedAt: new Date() })
+      .where(eq(supportTickets.id, ticket.id));
+  });
+  await ctx.reply(
+    `${t(languageOf(user), "supportReplySent")}\n\n<b>${t(languageOf(user), "ticketNumber")}:</b> <code>${escapeHtml(ticket.ticketNumber)}</code>`,
+    { parse_mode: "HTML", reply_markup: customerKeyboard(languageOf(user)) },
+  );
+  await showSupportTicket(ctx, user, ticket.id);
   return true;
 }
 
@@ -1158,6 +1220,16 @@ export function buildTelegramBot() {
       await showSupportTickets(ctx, user);
       return;
     }
+    if (data.startsWith("support:reply:cancel:")) {
+      const ticketId = data.slice("support:reply:cancel:".length);
+      supportReplyDrafts.delete(user.id);
+      await showSupportTicket(ctx, user, ticketId);
+      return;
+    }
+    if (data.startsWith("support:reply:")) {
+      await beginSupportReply(ctx, user, data.slice("support:reply:".length));
+      return;
+    }
     if (data.startsWith("support:ticket:")) {
       await showSupportTicket(ctx, user, data.slice("support:ticket:".length));
       return;
@@ -1266,6 +1338,7 @@ export function buildTelegramBot() {
   bot.on("message:text", async (ctx) => {
     const user = await findOrCreateCustomer(ctx);
     if (!user) return;
+    if (await acceptSupportReply(ctx, user, ctx.message.text)) return;
     if (await acceptSupportMessage(ctx, user, ctx.message.text)) return;
     if (await acceptWalletTopUpTransactionId(ctx, user, ctx.message.text)) return;
     if (await acceptPaymentReference(ctx, user, ctx.message.text)) return;

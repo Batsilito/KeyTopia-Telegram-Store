@@ -804,7 +804,7 @@ router.post("/support/tickets/:ticketId/messages", async (req, res) => {
     ? await db.select().from(users).where(eq(users.id, ticket[0].userId)).limit(1)
     : [];
   if (ticket[0] && customer[0]) {
-    await sendSupportReply(customer[0], ticket[0].ticketNumber, message[0].body);
+    await sendSupportReply(customer[0], ticket[0].id, ticket[0].ticketNumber, message[0].body);
   }
   res.status(201).json({
     id: message[0].id,
