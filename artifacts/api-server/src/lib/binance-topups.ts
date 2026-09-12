@@ -1,6 +1,7 @@
 import { createHmac } from "node:crypto";
 import { and, asc, eq, isNull } from "drizzle-orm";
 import {
+  binanceTransactionClaims,
   checkoutSessions,
   db,
   orders,
@@ -13,7 +14,12 @@ import {
 } from "@workspace/db";
 import { logger } from "./logger";
 
-const BINANCE_API_BASE_URL = "https://api.binance.com";
+const BINANCE_API_BASE_URLS = [
+  "https://api.binance.com",
+  "https://api-gcp.binance.com",
+  "https://api1.binance.com",
+  "https://api2.binance.com",
+] as const;
 const POLL_LOOKBACK_MS = 15 * 60 * 1000;
 const MAX_PENDING_PAYMENTS = 100;
 
@@ -82,34 +88,48 @@ async function getPayHistory(startTime: number, endTime: number) {
   const apiSecret = process.env.BINANCE_API_SECRET;
   if (!apiKey || !apiSecret) return null;
 
-  const params = new URLSearchParams({
-    endTime: String(endTime),
-    limit: "100",
-    recvWindow: "5000",
-    startTime: String(startTime),
-    timestamp: String(Date.now()),
-  });
-  const signature = createHmac("sha256", apiSecret)
-    .update(params.toString())
-    .digest("hex");
-  params.set("signature", signature);
-
-  const response = await fetch(
-    `${BINANCE_API_BASE_URL}/sapi/v1/pay/transactions?${params.toString()}`,
-    {
-      headers: {
-        "X-MBX-APIKEY": apiKey,
-      },
-      signal: AbortSignal.timeout(10_000),
-    },
-  );
-  const body = (await response.json()) as BinancePayHistoryResponse;
-  if (!response.ok || body.code !== "000000") {
-    throw new Error(
-      `Binance Pay history request failed (${response.status}): ${body.code ?? "unknown"} ${body.message ?? response.statusText}`,
-    );
+  const errors: string[] = [];
+  for (const baseUrl of BINANCE_API_BASE_URLS) {
+    try {
+      const params = new URLSearchParams({
+        endTime: String(endTime),
+        limit: "100",
+        recvWindow: "10000",
+        startTime: String(startTime),
+        timestamp: String(Date.now()),
+      });
+      const signature = createHmac("sha256", apiSecret)
+        .update(params.toString())
+        .digest("hex");
+      params.set("signature", signature);
+      const response = await fetch(
+        `${baseUrl}/sapi/v1/pay/transactions?${params.toString()}`,
+        {
+          headers: {
+            "X-MBX-APIKEY": apiKey,
+          },
+          signal: AbortSignal.timeout(10_000),
+        },
+      );
+      const body = (await response.json()) as BinancePayHistoryResponse;
+      if (response.ok && body.code === "000000") {
+        return body.data ?? [];
+      }
+      errors.push(
+        `${new URL(baseUrl).hostname}=${response.status}/${body.code ?? "unknown"} ${body.message ?? response.statusText}`,
+      );
+      if (
+        response.status !== 451 &&
+        response.status < 500 &&
+        String(body.code ?? "") !== "-1021"
+      ) break;
+    } catch (error) {
+      errors.push(
+        `${new URL(baseUrl).hostname}=${error instanceof Error ? error.message : "request failed"}`,
+      );
+    }
   }
-  return body.data ?? [];
+  throw new Error(`Binance Pay history request failed: ${errors.join("; ")}`);
 }
 
 function matchesTransaction(
@@ -144,6 +164,17 @@ async function confirmWalletTopUp(
   transactionId: string,
 ) {
   return db.transaction(async (tx) => {
+    const transactionClaim = await tx
+      .insert(binanceTransactionClaims)
+      .values({
+        transactionId,
+        purpose: "wallet_top_up",
+        referenceId: topUp.id,
+      })
+      .onConflictDoNothing()
+      .returning({ id: binanceTransactionClaims.id });
+    if (!transactionClaim[0]) return null;
+
     const claimed = await tx
       .update(walletTopUps)
       .set({
@@ -160,7 +191,9 @@ async function confirmWalletTopUp(
         ),
       )
       .returning();
-    if (!claimed[0]) return null;
+    if (!claimed[0]) {
+      throw new Error(`Unable to confirm wallet top-up ${topUp.id}`);
+    }
 
     await tx.insert(walletTransactions).values({
       userId: topUp.userId,
@@ -194,6 +227,17 @@ async function confirmProductPayment(
   transactionId: string,
 ) {
   return db.transaction(async (tx) => {
+    const transactionClaim = await tx
+      .insert(binanceTransactionClaims)
+      .values({
+        transactionId,
+        purpose: "product_payment",
+        referenceId: payment.id,
+      })
+      .onConflictDoNothing()
+      .returning({ id: binanceTransactionClaims.id });
+    if (!transactionClaim[0]) return null;
+
     const claimed = await tx
       .update(payments)
       .set({
@@ -209,12 +253,15 @@ async function confirmProductPayment(
         ),
       )
       .returning();
-    if (!claimed[0]) return null;
+    if (!claimed[0]) {
+      throw new Error(`Unable to confirm product payment ${payment.id}`);
+    }
 
     const checkoutRows = await tx
       .select({
         checkout: checkoutSessions,
         deliveryType: products.deliveryType,
+        stockType: products.stockType,
       })
       .from(checkoutSessions)
       .innerJoin(products, eq(checkoutSessions.productId, products.id))
@@ -242,6 +289,7 @@ async function confirmProductPayment(
         paymentMethod: claimed[0].paymentMethod,
         status: "paid",
         deliveryType: checkout.deliveryType,
+        stockTypeSnapshot: checkout.stockType,
       })
       .returning();
     const order = orderRows[0];

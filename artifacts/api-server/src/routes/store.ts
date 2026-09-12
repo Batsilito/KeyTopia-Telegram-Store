@@ -35,6 +35,7 @@ import {
 import {
   admins,
   auditLogs,
+  binanceTransactionClaims,
   checkoutSessions,
   db,
   flashSales,
@@ -62,6 +63,8 @@ import {
   broadcastNewProduct,
   broadcastProductRestocked,
   issueReferralRewardForOrder,
+  notifyOrderConfirmed,
+  notifyOrderDelivered,
   sendSupportReply,
 } from "../bot";
 
@@ -516,10 +519,25 @@ router.post("/orders/:orderId/status", async (req, res) => {
   if (!admin) return res;
   const parsed = UpdateOrderStatusBody.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid order status" });
-  const rows = await db.update(orders).set({ status: parsed.data.status, updatedAt: new Date() }).where(eq(orders.id, req.params.orderId)).returning();
+  const current = await db
+    .select({ status: orders.status })
+    .from(orders)
+    .where(eq(orders.id, req.params.orderId))
+    .limit(1);
+  if (!current[0]) return res.status(404).json({ error: "Order not found" });
+  const allowed =
+    (current[0].status === "paid" && ["processing", "cancelled"].includes(parsed.data.status)) ||
+    (current[0].status === "processing" && parsed.data.status === "cancelled");
+  if (!allowed) return res.status(409).json({ error: "Invalid order status transition" });
+  const rows = await db
+    .update(orders)
+    .set({ status: parsed.data.status, updatedAt: new Date() })
+    .where(and(eq(orders.id, req.params.orderId), eq(orders.status, current[0].status)))
+    .returning();
   if (!rows[0]) return res.status(404).json({ error: "Order not found" });
   if (rows[0].status === "paid") {
     await issueReferralRewardForOrder(rows[0]);
+    await notifyOrderConfirmed(rows[0].id);
   }
   const items = await listOrderRows(1, { page: 1, pageSize: 1, search: rows[0].orderNumber });
   res.json(items[0]);
@@ -530,8 +548,18 @@ router.post("/orders/:orderId/deliver", async (req, res) => {
   if (!admin) return res;
   const parsed = DeliverOrderBody.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Delivery information is required" });
-  const rows = await db.update(orders).set({ deliveryInfo: parsed.data.deliveryInfo, status: "delivered", deliveredAt: new Date(), updatedAt: new Date() }).where(eq(orders.id, req.params.orderId)).returning();
+  const rows = await db
+    .update(orders)
+    .set({ deliveryInfo: parsed.data.deliveryInfo, status: "delivered", deliveredAt: new Date(), updatedAt: new Date() })
+    .where(
+      and(
+        eq(orders.id, req.params.orderId),
+        inArray(orders.status, ["paid", "processing"]),
+      ),
+    )
+    .returning();
   if (!rows[0]) return res.status(404).json({ error: "Order not found" });
+  await notifyOrderDelivered(rows[0].id);
   const items = await listOrderRows(1, { page: 1, pageSize: 1, search: rows[0].orderNumber });
   res.json(items[0]);
 });
@@ -611,13 +639,14 @@ router.post("/payments/:paymentId/confirm", async (req, res) => {
         .where(eq(orders.id, existingPayment.orderId))
         .limit(1);
       const existingOrder = existingOrderRows[0];
-      return existingOrder ? { payment: existingPayment, order: existingOrder } : null;
+       return existingOrder ? { payment: existingPayment, order: existingOrder, newlyConfirmed: false } : null;
     }
 
     const checkoutRows = await tx
       .select({
         checkout: checkoutSessions,
         deliveryType: products.deliveryType,
+        stockType: products.stockType,
       })
       .from(checkoutSessions)
       .innerJoin(products, eq(checkoutSessions.productId, products.id))
@@ -626,6 +655,21 @@ router.post("/payments/:paymentId/confirm", async (req, res) => {
     const checkout = checkoutRows[0];
     if (!checkout) {
       throw new Error(`Checkout session ${payment.checkoutSessionId} is missing`);
+    }
+
+    if (payment.paymentMethod === "binance" && payment.transactionReference) {
+      const transactionClaim = await tx
+        .insert(binanceTransactionClaims)
+        .values({
+          transactionId: payment.transactionReference,
+          purpose: "product_payment",
+          referenceId: payment.id,
+        })
+        .onConflictDoNothing()
+        .returning({ id: binanceTransactionClaims.id });
+      if (!transactionClaim[0]) {
+        throw new Error("BINANCE_TRANSACTION_ALREADY_USED");
+      }
     }
 
     const orderRows = await tx
@@ -645,6 +689,7 @@ router.post("/payments/:paymentId/confirm", async (req, res) => {
         paymentMethod: payment.paymentMethod,
         status: "paid",
         deliveryType: checkout.deliveryType,
+        stockTypeSnapshot: checkout.stockType,
       })
       .returning();
     const order = orderRows[0];
@@ -659,10 +704,21 @@ router.post("/payments/:paymentId/confirm", async (req, res) => {
       .set({ status: "confirmed", updatedAt: new Date() })
       .where(eq(checkoutSessions.id, checkout.checkout.id));
 
-    return { payment, order };
+    return { payment, order, newlyConfirmed: true };
+  }).catch((error: unknown) => {
+    if (error instanceof Error && error.message === "BINANCE_TRANSACTION_ALREADY_USED") {
+      return "binance_transaction_already_used" as const;
+    }
+    throw error;
   });
+  if (result === "binance_transaction_already_used") {
+    return res.status(409).json({ error: "This Binance transaction ID was already used" });
+  }
   if (!result) return res.status(409).json({ error: "Payment is already processed or missing" });
-  await issueReferralRewardForOrder(result.order);
+  if (result.newlyConfirmed) {
+    await issueReferralRewardForOrder(result.order);
+    await notifyOrderConfirmed(result.order.id);
+  }
   const items = await listPaymentRows(1, { page: 1, pageSize: 1 });
   res.json(items.find((item) => item.id === result.payment.id) ?? { id: result.payment.id });
 });

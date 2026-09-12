@@ -2,7 +2,7 @@ import { Bot, InlineKeyboard, InputFile, Keyboard, webhookCallback, type Context
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { randomBytes } from "node:crypto";
-import { and, count, desc, eq, gt, lte, sum } from "drizzle-orm";
+import { and, count, desc, eq, gt, inArray, isNull, lte, or, sum } from "drizzle-orm";
 import {
   checkoutSessions,
   db,
@@ -22,6 +22,7 @@ import {
 } from "@workspace/db";
 import { logger } from "../lib/logger";
 import { pollBinancePayments } from "../lib/binance-topups";
+import { fulfillAutomaticOrder } from "../lib/order-fulfillment";
 import { t, type BotLanguage } from "./locales";
 
 export const telegramBotToken = process.env.TELEGRAM_BOT_TOKEN;
@@ -112,6 +113,87 @@ export async function sendSupportReply(
     return true;
   } catch (error) {
     logger.warn({ err: error, telegramUserId: user.telegramUserId, ticketNumber }, "Unable to deliver admin support reply to Telegram");
+    return false;
+  }
+}
+
+export async function notifyOrderDelivered(orderId: string) {
+  if (!telegramBot) return false;
+  const rows = await db
+    .select({
+      order: orders,
+      telegramUserId: users.telegramUserId,
+      language: users.language,
+    })
+    .from(orders)
+    .innerJoin(users, eq(orders.userId, users.id))
+    .where(eq(orders.id, orderId))
+    .limit(1);
+  const row = rows[0];
+  if (!row?.order.deliveryInfo) return false;
+  try {
+    await telegramBot.api.sendMessage(
+      row.telegramUserId,
+      [
+        `<b>${t(row.language, "orderDelivered")}</b>`,
+        "",
+        `📦 <b>${t(row.language, "product")}:</b> ${escapeHtml(row.order.productNameSnapshot)}`,
+        `🧾 <b>${t(row.language, "shopOrder")}:</b> <code>${escapeHtml(row.order.orderNumber)}</code>`,
+        "",
+        `<b>${t(row.language, "deliveryDetails")}:</b>`,
+        `<pre>${escapeHtml(row.order.deliveryInfo)}</pre>`,
+      ].join("\n"),
+      {
+        parse_mode: "HTML",
+        reply_markup: customerKeyboard(row.language),
+      },
+    );
+    await db
+      .update(orders)
+      .set({ deliveryNotifiedAt: new Date(), updatedAt: new Date() })
+      .where(eq(orders.id, orderId));
+    return true;
+  } catch (error) {
+    logger.warn({ err: error, orderId }, "Unable to send order delivery to Telegram");
+    return false;
+  }
+}
+
+export async function notifyOrderConfirmed(orderId: string) {
+  const fulfillment = await fulfillAutomaticOrder(orderId);
+  if (!fulfillment) return false;
+  if (!telegramBot) return false;
+  if (fulfillment.status === "delivered" && fulfillment.order.deliveryInfo) {
+    return notifyOrderDelivered(orderId);
+  }
+  const customer = await db
+    .select({
+      telegramUserId: users.telegramUserId,
+      language: users.language,
+    })
+    .from(users)
+    .where(eq(users.id, fulfillment.order.userId))
+    .limit(1);
+  if (!customer[0]) return false;
+  try {
+    await telegramBot.api.sendMessage(
+      customer[0].telegramUserId,
+      t(customer[0].language, "orderPaymentConfirmed").replace(
+        "{order}",
+        escapeHtml(fulfillment.order.orderNumber),
+      ),
+      {
+        parse_mode: "HTML",
+        reply_markup: customerKeyboard(customer[0].language),
+      },
+    );
+    await db
+      .update(orders)
+      .set({ paymentNotifiedAt: new Date(), updatedAt: new Date() })
+      .where(eq(orders.id, orderId));
+    return true;
+  } catch (error) {
+    logger.warn({ err: error, orderId }, "Unable to send order confirmation to Telegram");
     return false;
   }
 }
@@ -222,35 +304,69 @@ export async function notifyDueFlashSales() {
   }
 }
 
+export async function processBinancePayments() {
+  if (!telegramBot) return;
+  const confirmedPayments = await pollBinancePayments();
+  for (const payment of confirmedPayments) {
+    try {
+      if (payment.kind === "order") {
+        await issueReferralRewardForOrder({
+          id: payment.orderId,
+          userId: payment.userId,
+          orderNumber: payment.orderNumber,
+        });
+        await notifyOrderConfirmed(payment.orderId);
+      } else {
+        await telegramBot.api.sendMessage(
+          payment.telegramUserId,
+          t(payment.language, "topUpConfirmed").replace(
+            "{amount}",
+            Number(payment.amountUsd).toFixed(2),
+          ),
+          { parse_mode: "HTML", reply_markup: customerKeyboard(payment.language) },
+        );
+      }
+    } catch (error) {
+      logger.warn(
+        { err: error, telegramUserId: payment.telegramUserId, transactionId: payment.transactionId },
+        "Unable to finalize Binance payment",
+      );
+    }
+  }
+}
+
+async function recoverOrderNotifications() {
+  const pendingOrders = await db
+    .select({ id: orders.id })
+    .from(orders)
+    .where(
+      or(
+        and(
+          eq(orders.deliveryType, "automatic"),
+          inArray(orders.status, ["paid", "processing"]),
+        ),
+        and(
+          inArray(orders.status, ["paid", "processing"]),
+          isNull(orders.paymentNotifiedAt),
+        ),
+        and(
+          eq(orders.status, "delivered"),
+          isNull(orders.deliveryNotifiedAt),
+        ),
+      ),
+    )
+    .limit(100);
+  for (const order of pendingOrders) {
+    await notifyOrderConfirmed(order.id);
+  }
+}
+
 export function startStoreNotificationScheduler() {
   if (!telegramBot) return;
   const run = async () => {
     await notifyDueFlashSales();
-    const confirmedPayments = await pollBinancePayments();
-    for (const payment of confirmedPayments) {
-      try {
-        if (payment.kind === "order") {
-          await issueReferralRewardForOrder({
-            id: payment.orderId,
-            userId: payment.userId,
-            orderNumber: payment.orderNumber,
-          });
-        }
-        const message = payment.kind === "wallet"
-          ? t(payment.language, "topUpConfirmed").replace("{amount}", Number(payment.amountUsd).toFixed(2))
-          : t(payment.language, "orderPaymentConfirmed").replace("{order}", escapeHtml(payment.orderNumber));
-        await telegramBot.api.sendMessage(
-          payment.telegramUserId,
-          message,
-          { parse_mode: "HTML", reply_markup: customerKeyboard(payment.language) },
-        );
-      } catch (error) {
-        logger.warn(
-          { err: error, telegramUserId: payment.telegramUserId, transactionId: payment.transactionId },
-          "Unable to send Binance payment confirmation",
-        );
-      }
-    }
+    await recoverOrderNotifications();
+    await processBinancePayments();
   };
   const runSafely = () => {
     void run().catch((error) => {
@@ -630,6 +746,9 @@ async function acceptWalletTopUpTransactionId(
   }
   await ctx.reply(t(languageOf(user), "topUpPending"), {
     reply_markup: customerKeyboard(languageOf(user)),
+  });
+  void processBinancePayments().catch((error) => {
+    logger.error({ err: error }, "Immediate Binance top-up check failed");
   });
   return true;
 }
@@ -1179,6 +1298,11 @@ async function acceptPaymentReference(ctx: Context, user: typeof users.$inferSel
     });
   });
   await ctx.reply(t(languageOf(user), "paymentSubmitted"), { reply_markup: customerKeyboard(languageOf(user)) });
+  if (checkout[0].paymentMethod === "binance") {
+    void processBinancePayments().catch((error) => {
+      logger.error({ err: error }, "Immediate Binance payment check failed");
+    });
+  }
   return true;
 }
 

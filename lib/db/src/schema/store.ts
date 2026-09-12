@@ -214,7 +214,10 @@ export const orders = pgTable(
     paymentMethod: paymentMethodEnum("payment_method").notNull(),
     status: orderStatusEnum("status").default("paid").notNull(),
     deliveryType: deliveryTypeEnum("delivery_type").notNull(),
+    stockTypeSnapshot: stockTypeEnum("stock_type_snapshot"),
     deliveryInfo: text("delivery_info"),
+    paymentNotifiedAt: timestamp("payment_notified_at", { withTimezone: true }),
+    deliveryNotifiedAt: timestamp("delivery_notified_at", { withTimezone: true }),
     createdAt: createdAt(),
     deliveredAt: timestamp("delivered_at", { withTimezone: true }),
     updatedAt: updatedAt(),
@@ -242,6 +245,22 @@ export const payments = pgTable("payments", {
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
+
+export const binanceTransactionClaims = pgTable(
+  "binance_transaction_claims",
+  {
+    id: id(),
+    transactionId: text("transaction_id").notNull(),
+    purpose: text("purpose").notNull(),
+    referenceId: uuid("reference_id").notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => ({
+    transactionIdIdx: uniqueIndex("binance_transaction_claims_transaction_id_idx").on(
+      table.transactionId,
+    ),
+  }),
+);
 
 export const paymentSubmissions = pgTable("payment_submissions", {
   id: id(),
