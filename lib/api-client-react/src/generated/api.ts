@@ -61,7 +61,8 @@ import type {
   SupportTicket,
   SupportTicketConversation,
   SupportTicketPage,
-  SupportTicketUpdate
+  SupportTicketUpdate,
+  TelegramTestNotificationResponse
 } from './api.schemas';
 
 import { customFetch } from '../custom-fetch';
@@ -2724,6 +2725,80 @@ export const useUpdateStoreSettings = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getUpdateStoreSettingsMutationOptions(options));
+    }
+
+export const getSendAdminTelegramTestUrl = () => {
+
+
+
+
+  return `/api/settings/telegram-test`
+}
+
+/**
+ * @summary Send a test Telegram message to the configured admin chat
+ */
+export const sendAdminTelegramTest = async ( options?: Parameters<typeof customFetch>[1]): Promise<TelegramTestNotificationResponse> => {
+
+  return customFetch<TelegramTestNotificationResponse>(getSendAdminTelegramTestUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getSendAdminTelegramTestMutationKey = () => ['sendAdminTelegramTest'] as const;
+
+export const getSendAdminTelegramTestMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof sendAdminTelegramTest>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof sendAdminTelegramTest>>, TError,void, TContext> => {
+
+const mutationKey = getSendAdminTelegramTestMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof sendAdminTelegramTest>>, void> = () => {
+
+
+          return  sendAdminTelegramTest(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SendAdminTelegramTestMutationResult = NonNullable<Awaited<ReturnType<typeof sendAdminTelegramTest>>>
+
+    export type SendAdminTelegramTestMutationError = ErrorType<void>
+
+
+    /**
+ * @summary Send a test Telegram message to the configured admin chat
+ */
+export const useSendAdminTelegramTest = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof sendAdminTelegramTest>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof sendAdminTelegramTest>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getSendAdminTelegramTestMutationOptions(options));
     }
 
 export const getGetAnalyticsSummaryUrl = (params: GetAnalyticsSummaryParams,) => {

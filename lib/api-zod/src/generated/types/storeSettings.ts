@@ -19,6 +19,8 @@ export interface StoreSettings {
   lowStockThreshold: number;
   maintenanceMode: boolean;
   supportAvailable: boolean;
+  /** @nullable */
+  adminTelegramChatId: string | null;
   binanceEnabled: boolean;
   bybitEnabled: boolean;
   vodafoneCashEnabled: boolean;

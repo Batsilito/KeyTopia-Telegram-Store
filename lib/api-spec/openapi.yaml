@@ -562,6 +562,22 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/StoreSettings"
+  /settings/telegram-test:
+    post:
+      operationId: sendAdminTelegramTest
+      tags: [settings]
+      summary: Send a test Telegram message to the configured admin chat
+      responses:
+        "200":
+          description: Test message sent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TelegramTestNotificationResponse"
+        "400":
+          description: Admin Telegram chat is not configured
+        "503":
+          description: Telegram bot is unavailable
   /analytics/summary:
     get:
       operationId: getAnalyticsSummary
@@ -1016,12 +1032,13 @@ components:
         lowStockThreshold: { type: integer }
         maintenanceMode: { type: boolean }
         supportAvailable: { type: boolean }
+        adminTelegramChatId: { type: ["string", "null"] }
         binanceEnabled: { type: boolean }
         bybitEnabled: { type: boolean }
         vodafoneCashEnabled: { type: boolean }
         instapayEnabled: { type: boolean }
         termsVersion: { type: string }
-      required: [storeName, requiredTelegramChannel, cashbackPercent, referralRewardUsd, usdToEgpRate, paymentRounding, checkoutTimeoutMinutes, lowStockThreshold, maintenanceMode, supportAvailable, binanceEnabled, bybitEnabled, vodafoneCashEnabled, instapayEnabled, termsVersion]
+      required: [storeName, requiredTelegramChannel, cashbackPercent, referralRewardUsd, usdToEgpRate, paymentRounding, checkoutTimeoutMinutes, lowStockThreshold, maintenanceMode, supportAvailable, adminTelegramChatId, binanceEnabled, bybitEnabled, vodafoneCashEnabled, instapayEnabled, termsVersion]
     StoreSettingsUpdate:
       type: object
       properties:
@@ -1035,11 +1052,17 @@ components:
         lowStockThreshold: { type: integer, minimum: 0 }
         maintenanceMode: { type: boolean }
         supportAvailable: { type: boolean }
+        adminTelegramChatId: { type: ["string", "null"] }
         binanceEnabled: { type: boolean }
         bybitEnabled: { type: boolean }
         vodafoneCashEnabled: { type: boolean }
         instapayEnabled: { type: boolean }
         termsVersion: { type: string, minLength: 1 }
+    TelegramTestNotificationResponse:
+      type: object
+      properties:
+        sent: { type: boolean }
+      required: [sent]
     AnalyticsSummary:
       type: object
       properties:

@@ -117,6 +117,81 @@ export async function sendSupportReply(
   }
 }
 
+function maskedCustomerName(user: Pick<typeof users.$inferSelect, "firstName" | "lastName">) {
+  const fullName = [user.firstName, user.lastName].filter(Boolean).join(" ").trim() || "Customer";
+  if (fullName.length <= 3) return `${fullName.slice(0, 1)}•••`;
+  return `${fullName.slice(0, 2)}•••${fullName.slice(-1)}`;
+}
+
+export async function sendAdminTelegramTest() {
+  if (!telegramBot) return { sent: false, reason: "unavailable" as const };
+  const settings = await db
+    .select({ adminTelegramChatId: storeSettings.adminTelegramChatId })
+    .from(storeSettings)
+    .limit(1);
+  const chatId = settings[0]?.adminTelegramChatId?.trim();
+  if (!chatId) return { sent: false, reason: "not_configured" as const };
+  try {
+    await telegramBot.api.sendMessage(
+      chatId,
+      [
+        "<b>✅ KeyTopia admin notifications connected</b>",
+        "",
+        "You will receive masked sale alerts here when a product payment is confirmed.",
+      ].join("\n"),
+      { parse_mode: "HTML" },
+    );
+    return { sent: true as const };
+  } catch (error) {
+    logger.warn({ err: error }, "Unable to send admin Telegram test notification");
+    return { sent: false, reason: "delivery_failed" as const };
+  }
+}
+
+export async function notifyAdminProductSold(orderId: string) {
+  if (!telegramBot) return false;
+  const [settings, rows] = await Promise.all([
+    db
+      .select({ adminTelegramChatId: storeSettings.adminTelegramChatId })
+      .from(storeSettings)
+      .limit(1),
+    db
+      .select({ order: orders, user: users, product: products })
+      .from(orders)
+      .innerJoin(users, eq(orders.userId, users.id))
+      .innerJoin(products, eq(orders.productId, products.id))
+      .where(and(eq(orders.id, orderId), isNull(orders.adminSaleNotifiedAt)))
+      .limit(1),
+  ]);
+  const chatId = settings[0]?.adminTelegramChatId?.trim();
+  const row = rows[0];
+  if (!chatId || !row) return false;
+  try {
+    await telegramBot.api.sendMessage(
+      chatId,
+      [
+        "<b>🛍️ PRODUCT SOLD</b>",
+        "",
+        `📦 <b>Product:</b> ${escapeHtml(row.product.nameEn)}`,
+        `👤 <b>Customer:</b> ${escapeHtml(maskedCustomerName(row.user))}`,
+        `🔢 <b>Quantity:</b> ${row.order.quantity}`,
+        `💰 <b>Amount:</b> ${escapeHtml(String(row.order.priceUsd))} USDT`,
+        `🧾 <b>Order:</b> <code>${escapeHtml(row.order.orderNumber)}</code>`,
+      ].join("\n"),
+      { parse_mode: "HTML" },
+    );
+    const marked = await db
+      .update(orders)
+      .set({ adminSaleNotifiedAt: new Date(), updatedAt: new Date() })
+      .where(and(eq(orders.id, orderId), isNull(orders.adminSaleNotifiedAt)))
+      .returning({ id: orders.id });
+    return Boolean(marked[0]);
+  } catch (error) {
+    logger.warn({ err: error, orderId }, "Unable to send product sale notification to admin");
+    return false;
+  }
+}
+
 export async function notifyOrderDelivered(orderId: string) {
   if (!telegramBot) return false;
   const rows = await db
@@ -162,6 +237,7 @@ export async function notifyOrderDelivered(orderId: string) {
 export async function notifyOrderConfirmed(orderId: string) {
   const fulfillment = await fulfillAutomaticOrder(orderId);
   if (!fulfillment) return false;
+  await notifyAdminProductSold(fulfillment.order.id);
   if (!telegramBot) return false;
   if (fulfillment.status === "delivered" && fulfillment.order.deliveryInfo) {
     return notifyOrderDelivered(orderId);
@@ -1371,6 +1447,9 @@ export function buildTelegramBot() {
       return;
     }
     if (await ensureAccess(ctx, user)) await showHome(ctx, user);
+  });
+  bot.command("chatid", async (ctx) => {
+    await ctx.reply(`Your Telegram chat ID is: ${ctx.chat.id}`);
   });
   bot.command("shop", async (ctx) => {
     const user = await findOrCreateCustomer(ctx);

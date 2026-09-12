@@ -65,6 +65,7 @@ import {
   issueReferralRewardForOrder,
   notifyOrderConfirmed,
   notifyOrderDelivered,
+  sendAdminTelegramTest,
   sendSupportReply,
 } from "../bot";
 import { testBinanceApiConnectivity } from "../lib/binance-topups";
@@ -991,6 +992,7 @@ router.get("/settings", async (req, res) => {
     lowStockThreshold: settings.lowStockThreshold,
     maintenanceMode: settings.maintenanceMode,
     supportAvailable: settings.supportAvailable,
+    adminTelegramChatId: settings.adminTelegramChatId,
     binanceEnabled: enabled.has("binance"),
     bybitEnabled: enabled.has("bybit"),
     vodafoneCashEnabled: enabled.has("vodafone_cash"),
@@ -1018,6 +1020,9 @@ router.patch("/settings", async (req, res) => {
   if (parsed.data.lowStockThreshold !== undefined) settingsUpdate.lowStockThreshold = parsed.data.lowStockThreshold;
   if (parsed.data.maintenanceMode !== undefined) settingsUpdate.maintenanceMode = parsed.data.maintenanceMode;
   if (parsed.data.supportAvailable !== undefined) settingsUpdate.supportAvailable = parsed.data.supportAvailable;
+  if (parsed.data.adminTelegramChatId !== undefined) {
+    settingsUpdate.adminTelegramChatId = parsed.data.adminTelegramChatId?.trim() || null;
+  }
   if (parsed.data.termsVersion !== undefined) settingsUpdate.termsVersion = parsed.data.termsVersion;
   const rows = await db.update(storeSettings).set(settingsUpdate).where(eq(storeSettings.id, settings.id)).returning();
   const methodToggles = [
@@ -1043,12 +1048,27 @@ router.patch("/settings", async (req, res) => {
     lowStockThreshold: rows[0].lowStockThreshold,
     maintenanceMode: rows[0].maintenanceMode,
     supportAvailable: rows[0].supportAvailable,
+    adminTelegramChatId: rows[0].adminTelegramChatId,
     binanceEnabled: Boolean(parsed.data.binanceEnabled),
     bybitEnabled: Boolean(parsed.data.bybitEnabled),
     vodafoneCashEnabled: Boolean(parsed.data.vodafoneCashEnabled),
     instapayEnabled: Boolean(parsed.data.instapayEnabled),
     termsVersion: rows[0].termsVersion,
   });
+});
+
+router.post("/settings/telegram-test", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return res;
+  if (admin.role !== "super_admin") return res.status(403).json({ error: "Super admin access required" });
+  const result = await sendAdminTelegramTest();
+  if (result.reason === "not_configured") {
+    return res.status(400).json({ error: "Admin Telegram chat ID is not configured" });
+  }
+  if (result.reason) {
+    return res.status(503).json({ error: "Telegram bot is unavailable" });
+  }
+  res.json({ sent: true });
 });
 
 router.get("/analytics/summary", async (req, res) => {

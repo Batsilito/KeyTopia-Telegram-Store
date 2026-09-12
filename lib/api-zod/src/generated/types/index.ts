@@ -84,3 +84,4 @@ export * from './supportTicketPage';
 export * from './supportTicketStatus';
 export * from './supportTicketUpdate';
 export * from './supportTicketUpdateStatus';
+export * from './telegramTestNotificationResponse';

@@ -217,6 +217,7 @@ export const orders = pgTable(
     stockTypeSnapshot: stockTypeEnum("stock_type_snapshot"),
     deliveryInfo: text("delivery_info"),
     paymentNotifiedAt: timestamp("payment_notified_at", { withTimezone: true }),
+    adminSaleNotifiedAt: timestamp("admin_sale_notified_at", { withTimezone: true }),
     deliveryNotifiedAt: timestamp("delivery_notified_at", { withTimezone: true }),
     createdAt: createdAt(),
     deliveredAt: timestamp("delivered_at", { withTimezone: true }),
@@ -442,6 +443,7 @@ export const storeSettings = pgTable("store_settings", {
   termsAr: text("terms_ar").default("").notNull(),
   privacyEn: text("privacy_en").default("").notNull(),
   privacyAr: text("privacy_ar").default("").notNull(),
+  adminTelegramChatId: text("admin_telegram_chat_id"),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });

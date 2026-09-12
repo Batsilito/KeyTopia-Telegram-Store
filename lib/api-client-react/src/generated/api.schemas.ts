@@ -564,6 +564,8 @@ export interface StoreSettings {
   lowStockThreshold: number;
   maintenanceMode: boolean;
   supportAvailable: boolean;
+  /** @nullable */
+  adminTelegramChatId: string | null;
   binanceEnabled: boolean;
   bybitEnabled: boolean;
   vodafoneCashEnabled: boolean;
@@ -601,12 +603,18 @@ export interface StoreSettingsUpdate {
   lowStockThreshold?: number;
   maintenanceMode?: boolean;
   supportAvailable?: boolean;
+  /** @nullable */
+  adminTelegramChatId?: string | null;
   binanceEnabled?: boolean;
   bybitEnabled?: boolean;
   vodafoneCashEnabled?: boolean;
   instapayEnabled?: boolean;
   /** @minLength 1 */
   termsVersion?: string;
+}
+
+export interface TelegramTestNotificationResponse {
+  sent: boolean;
 }
 
 export interface MetricPoint {

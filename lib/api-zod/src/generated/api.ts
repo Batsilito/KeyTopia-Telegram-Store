@@ -826,6 +826,7 @@ export const GetStoreSettingsResponse = zod.object({
   "lowStockThreshold": zod.number().int(),
   "maintenanceMode": zod.boolean(),
   "supportAvailable": zod.boolean(),
+  "adminTelegramChatId": zod.string().nullable(),
   "binanceEnabled": zod.boolean(),
   "bybitEnabled": zod.boolean(),
   "vodafoneCashEnabled": zod.boolean(),
@@ -862,6 +863,7 @@ export const UpdateStoreSettingsBody = zod.object({
   "lowStockThreshold": zod.number().int().min(updateStoreSettingsBodyLowStockThresholdMin).optional(),
   "maintenanceMode": zod.boolean().optional(),
   "supportAvailable": zod.boolean().optional(),
+  "adminTelegramChatId": zod.string().nullish(),
   "binanceEnabled": zod.boolean().optional(),
   "bybitEnabled": zod.boolean().optional(),
   "vodafoneCashEnabled": zod.boolean().optional(),
@@ -880,11 +882,20 @@ export const UpdateStoreSettingsResponse = zod.object({
   "lowStockThreshold": zod.number().int(),
   "maintenanceMode": zod.boolean(),
   "supportAvailable": zod.boolean(),
+  "adminTelegramChatId": zod.string().nullable(),
   "binanceEnabled": zod.boolean(),
   "bybitEnabled": zod.boolean(),
   "vodafoneCashEnabled": zod.boolean(),
   "instapayEnabled": zod.boolean(),
   "termsVersion": zod.string()
+})
+
+
+/**
+ * @summary Send a test Telegram message to the configured admin chat
+ */
+export const SendAdminTelegramTestResponse = zod.object({
+  "sent": zod.boolean()
 })
 
 
