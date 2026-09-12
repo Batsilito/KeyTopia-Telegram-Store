@@ -391,7 +391,13 @@ export async function pollBinancePayments(): Promise<ConfirmedBinancePayment[]> 
   if (!receivingUid || (pendingTopUps.length === 0 && pendingPayments.length === 0)) {
     return [];
   }
-  if (!process.env.BINANCE_API_KEY || !process.env.BINANCE_API_SECRET) {
+  const remoteVerifierConfigured = Boolean(
+    process.env.BINANCE_VERIFIER_URL?.trim() && process.env.VERIFIER_SERVICE_TOKEN,
+  );
+  if (
+    !remoteVerifierConfigured &&
+    (!process.env.BINANCE_API_KEY || !process.env.BINANCE_API_SECRET)
+  ) {
     logger.warn("Binance payment polling is disabled because API credentials are missing");
     return [];
   }
@@ -415,9 +421,7 @@ export async function pollBinancePayments(): Promise<ConfirmedBinancePayment[]> 
       })),
   ];
   const earliestRequest = Math.min(...candidates.map((candidate) => candidate.requestedAt.getTime()));
-  const remoteVerifierConfigured = Boolean(
-    process.env.BINANCE_VERIFIER_URL?.trim() && process.env.VERIFIER_SERVICE_TOKEN,
-  );
+  const usedTransactionIds = new Set<string>();
   if (remoteVerifierConfigured) {
     const confirmed: ConfirmedBinancePayment[] = [];
     for (const candidate of candidates) {
@@ -468,7 +472,6 @@ export async function pollBinancePayments(): Promise<ConfirmedBinancePayment[]> 
   if (!transactions) return [];
 
   const confirmed: ConfirmedBinancePayment[] = [];
-  const usedTransactionIds = new Set<string>();
   for (const candidate of candidates) {
     if (usedTransactionIds.has(candidate.transactionId)) continue;
     const match = transactions.find((transaction) =>
