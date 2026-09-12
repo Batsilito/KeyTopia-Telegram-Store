@@ -1058,7 +1058,7 @@ async function beginCheckout(ctx: Context, user: typeof users.$inferSelect, prod
     keyboard.text(paymentMethodLabel(method.method), `method:${checkout[0].id}:${method.method}`).row();
   }
   keyboard
-    .text(t(language, "cancelOrder"), "nav:home")
+    .text(t(language, "cancelOrder"), `checkout:cancel:${checkout[0].id}`)
     .text(t(language, "support"), "nav:support");
   const productName = language === "ar" ? product.nameAr : product.nameEn;
   const methodLines = methods.length
@@ -1080,6 +1080,26 @@ async function beginCheckout(ctx: Context, user: typeof users.$inferSelect, prod
     `⏱ <b>${t(language, "paymentWindow")}:</b> 5 minutes`,
   ].join("\n");
   await ctx.reply(summary, { parse_mode: "HTML", reply_markup: keyboard });
+}
+
+async function cancelCheckout(ctx: Context, user: typeof users.$inferSelect, checkoutId: string) {
+  const cancelled = await db
+    .update(checkoutSessions)
+    .set({ status: "cancelled", updatedAt: new Date() })
+    .where(
+      and(
+        eq(checkoutSessions.id, checkoutId),
+        eq(checkoutSessions.userId, user.id),
+        eq(checkoutSessions.status, "pending"),
+      ),
+    )
+    .returning({ id: checkoutSessions.id });
+  await ctx.reply(
+    cancelled[0]
+      ? t(languageOf(user), "paymentCancelled")
+      : t(languageOf(user), "error"),
+    { reply_markup: customerKeyboard(languageOf(user)) },
+  );
 }
 
 async function showPayment(ctx: Context, user: typeof users.$inferSelect, checkoutId: string, method: "binance" | "bybit" | "vodafone_cash" | "instapay") {
@@ -1129,7 +1149,7 @@ async function showPayment(ctx: Context, user: typeof users.$inferSelect, checko
   }
   await ctx.reply(details, {
     parse_mode: "HTML",
-    reply_markup: new InlineKeyboard().text(t(language, "iHavePaid"), `paid:${checkoutId}`).row().text(t(language, "cancel"), "nav:home"),
+    reply_markup: new InlineKeyboard().text(t(language, "iHavePaid"), `paid:${checkoutId}`).row().text(t(language, "cancel"), `checkout:cancel:${checkoutId}`),
   });
 }
 
@@ -1205,6 +1225,10 @@ export function buildTelegramBot() {
     }
     if (data === "nav:home") {
       if (await ensureAccess(ctx, user)) await showHome(ctx, user);
+      return;
+    }
+    if (data.startsWith("checkout:cancel:")) {
+      await cancelCheckout(ctx, user, data.slice("checkout:cancel:".length));
       return;
     }
     if (data === "nav:wallet") {
