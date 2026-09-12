@@ -11,6 +11,9 @@ import {
   payments,
   products,
   storeSettings,
+  supportMessages,
+  supportTickets,
+  referrals,
   walletTransactions,
   users,
 } from "@workspace/db";
@@ -210,6 +213,8 @@ function paymentMethodDescription(method: string, language: BotLanguage) {
   return descriptions[method]?.[language] ?? "";
 }
 
+const supportDraftUsers = new Set<string>();
+
 async function findOrCreateCustomer(ctx: Context) {
   const from = ctx.from;
   if (!from) return null;
@@ -248,6 +253,18 @@ async function findOrCreateCustomer(ctx: Context) {
     })
     .returning();
   return created[0];
+}
+
+async function applyReferralCode(user: typeof users.$inferSelect, rawCode: string | undefined) {
+  const code = rawCode?.trim();
+  if (!code || code === user.referralCode || user.referredById) return user;
+  const referrer = await db.select().from(users).where(eq(users.referralCode, code)).limit(1);
+  if (!referrer[0] || referrer[0].id === user.id) return user;
+  await db.transaction(async (tx) => {
+    await tx.update(users).set({ referredById: referrer[0].id, updatedAt: new Date() }).where(eq(users.id, user.id));
+    await tx.insert(referrals).values({ referrerId: referrer[0].id, referredUserId: user.id });
+  });
+  return { ...user, referredById: referrer[0].id };
 }
 
 async function channelConfigured() {
@@ -359,6 +376,81 @@ async function showWalletPaymentMethod(
     parse_mode: "HTML",
     reply_markup: new InlineKeyboard().text(t(language, "backToWallet"), "nav:wallet"),
   });
+}
+
+async function showSupport(ctx: Context, user: typeof users.$inferSelect) {
+  if (!(await ensureAccess(ctx, user))) return;
+  const language = languageOf(user);
+  const settings = await db.select({ supportAvailable: storeSettings.supportAvailable }).from(storeSettings).limit(1);
+  if (settings[0] && !settings[0].supportAvailable) {
+    await ctx.reply(t(language, "supportUnavailable"), { reply_markup: new InlineKeyboard().text(t(language, "mainMenu"), "nav:home") });
+    return;
+  }
+  await ctx.reply(`<b>${t(language, "support")}</b>\n\n${t(language, "supportIntro")}`, {
+    parse_mode: "HTML",
+    reply_markup: new InlineKeyboard()
+      .text(t(language, "supportWrite"), "support:write")
+      .row()
+      .text(t(language, "mainMenu"), "nav:home"),
+  });
+}
+
+async function showReferral(ctx: Context, user: typeof users.$inferSelect) {
+  if (!(await ensureAccess(ctx, user))) return;
+  const language = languageOf(user);
+  const [referralCount, settings] = await Promise.all([
+    db.select({ total: count() }).from(referrals).where(eq(referrals.referrerId, user.id)),
+    db.select({ reward: storeSettings.referralRewardUsd }).from(storeSettings).limit(1),
+  ]);
+  const reward = Number(settings[0]?.reward ?? 0).toFixed(2);
+  const inviteLink = `https://t.me/KeyTopiaStore_bot?start=${encodeURIComponent(user.referralCode)}`;
+  const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(inviteLink)}&text=${encodeURIComponent(t(language, "referralIntro"))}`;
+  const text = [
+    `<b>${t(language, "referralTitle")}</b>`,
+    "",
+    t(language, "referralIntro"),
+    "",
+    `🔑 <b>${t(language, "referralCode")}:</b> <code>${escapeHtml(user.referralCode)}</code>`,
+    `💵 <b>${t(language, "referralReward")}:</b> ${reward} USDT`,
+    `👥 <b>${t(language, "referralInvites")}:</b> ${Number(referralCount[0]?.total ?? 0)}`,
+    "",
+    `<b>🔗 ${escapeHtml(inviteLink)}</b>`,
+  ].join("\n");
+  await ctx.reply(text, {
+    parse_mode: "HTML",
+    reply_markup: new InlineKeyboard()
+      .url(t(language, "shareInvite"), shareUrl)
+      .row()
+      .text(t(language, "mainMenu"), "nav:home"),
+  });
+}
+
+async function beginSupportMessage(ctx: Context, user: typeof users.$inferSelect) {
+  supportDraftUsers.add(user.id);
+  await ctx.reply(t(languageOf(user), "supportPrompt"), {
+    reply_markup: new InlineKeyboard()
+      .text(t(languageOf(user), "supportCancel"), "support:cancel")
+      .row()
+      .text(t(languageOf(user), "mainMenu"), "nav:home"),
+  });
+}
+
+async function acceptSupportMessage(ctx: Context, user: typeof users.$inferSelect, body: string) {
+  if (!supportDraftUsers.has(user.id)) return false;
+  supportDraftUsers.delete(user.id);
+  const ticket = await db.insert(supportTickets).values({
+    userId: user.id,
+    subject: "Telegram support request",
+  }).returning();
+  await db.insert(supportMessages).values({
+    ticketId: ticket[0].id,
+    authorType: "customer",
+    body,
+  });
+  await ctx.reply(t(languageOf(user), "supportTicketCreated"), {
+    reply_markup: customerKeyboard(languageOf(user)),
+  });
+  return true;
 }
 
 async function getProductAvailability(product: typeof products.$inferSelect) {
@@ -653,7 +745,8 @@ export function buildTelegramBot() {
     await next();
   });
   bot.command("start", async (ctx) => {
-    const user = await findOrCreateCustomer(ctx);
+    const foundUser = await findOrCreateCustomer(ctx);
+    const user = foundUser ? await applyReferralCode(foundUser, ctx.match) : null;
     if (!user) return;
     if (user.language === "en" && user.createdAt.getTime() === user.updatedAt.getTime()) {
       await ctx.reply(t("en", "chooseLanguage"), { reply_markup: languageKeyboard() });
@@ -690,6 +783,23 @@ export function buildTelegramBot() {
       await showWallet(ctx, user);
       return;
     }
+    if (data === "nav:support") {
+      await showSupport(ctx, user);
+      return;
+    }
+    if (data === "nav:refer") {
+      await showReferral(ctx, user);
+      return;
+    }
+    if (data === "support:write") {
+      await beginSupportMessage(ctx, user);
+      return;
+    }
+    if (data === "support:cancel") {
+      supportDraftUsers.delete(user.id);
+      await showSupport(ctx, user);
+      return;
+    }
     if (data === "wallet:topup") {
       await showWalletTopup(ctx, user);
       return;
@@ -711,7 +821,7 @@ export function buildTelegramBot() {
       return;
     }
     if (data === "shop:noop") return;
-    if (data === "nav:orders" || data === "nav:checkout" || data === "nav:channel" || data === "nav:support") {
+    if (data === "nav:orders" || data === "nav:checkout" || data === "nav:channel") {
       await ctx.reply(t(languageOf(user), "comingSoon"));
       return;
     }
@@ -764,10 +874,13 @@ export function buildTelegramBot() {
   bot.on("message:text", async (ctx) => {
     const user = await findOrCreateCustomer(ctx);
     if (!user) return;
+    if (await acceptSupportMessage(ctx, user, ctx.message.text)) return;
     if (await acceptPaymentReference(ctx, user, ctx.message.text)) return;
     const language = languageOf(user);
     if (ctx.message.text === t(language, "shop")) await showShop(ctx, user);
     else if (ctx.message.text === t(language, "wallet")) await showWallet(ctx, user);
+    else if (ctx.message.text === t(language, "support")) await showSupport(ctx, user);
+    else if (ctx.message.text === t(language, "refer")) await showReferral(ctx, user);
     else if (ctx.message.text === t(language, "settings")) await ctx.reply(t(language, "chooseLanguage"), { reply_markup: languageKeyboard() });
     else if (ctx.message.text === t(language, "home") || ctx.message.text === t(language, "mainMenu")) {
       await showHome(ctx, user);
