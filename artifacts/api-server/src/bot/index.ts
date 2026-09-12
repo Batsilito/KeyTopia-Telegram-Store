@@ -1330,6 +1330,10 @@ export function buildTelegramBot() {
     const user = await findOrCreateCustomer(ctx);
     if (user) await showShop(ctx, user);
   });
+  bot.command("menu", async (ctx) => {
+    const user = await findOrCreateCustomer(ctx);
+    if (user && (await ensureAccess(ctx, user))) await showHome(ctx, user);
+  });
   bot.on("callback_query:data", async (ctx) => {
     const user = await findOrCreateCustomer(ctx);
     if (!user) return;
