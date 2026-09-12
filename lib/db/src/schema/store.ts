@@ -168,7 +168,9 @@ export const inventoryItems = pgTable("inventory_items", {
   deliveredAt: timestamp("delivered_at", { withTimezone: true }),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
-});
+}, (table) => ({
+  valueHashIdx: uniqueIndex("inventory_items_value_hash_idx").on(table.valueHash),
+}));
 
 export const inventoryReservations = pgTable("inventory_reservations", {
   id: id(),
@@ -338,6 +340,26 @@ export const walletTransactions = pgTable("wallet_transactions", {
   reference: text("reference"),
   createdAt: createdAt(),
 });
+
+// Idempotency barrier for rewards. Wallet entries are an immutable ledger, while
+// this table records the business event that authorized each one. The unique
+// index prevents concurrent delivery retries from issuing a reward twice.
+export const orderRewardClaims = pgTable(
+  "order_reward_claims",
+  {
+    id: id(),
+    orderId: uuid("order_id").notNull(),
+    rewardType: text("reward_type").notNull(),
+    walletTransactionId: uuid("wallet_transaction_id").notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => ({
+    orderRewardIdx: uniqueIndex("order_reward_claims_order_reward_idx").on(
+      table.orderId,
+      table.rewardType,
+    ),
+  }),
+);
 
 export const walletTopUpStatusEnum = pgEnum("wallet_top_up_status", [
   "pending",

@@ -1,5 +1,5 @@
-import { and, asc, eq, inArray } from "drizzle-orm";
-import { db, inventoryItems, orders, products } from "@workspace/db";
+import { and, asc, eq, inArray, isNull } from "drizzle-orm";
+import { db, inventoryItems, inventoryReservations, orders, products } from "@workspace/db";
 
 export type AutomaticFulfillmentResult = {
   order: typeof orders.$inferSelect;
@@ -30,7 +30,21 @@ export async function fulfillAutomaticOrder(
 
     let deliveryInfo = "";
     if ((row.order.stockTypeSnapshot ?? row.product.stockType) === "limited") {
-      const available = await tx
+      const reserved = row.order.checkoutSessionId
+        ? await tx
+            .select({ id: inventoryItems.id, secretValue: inventoryItems.secretValue })
+            .from(inventoryReservations)
+            .innerJoin(inventoryItems, eq(inventoryReservations.inventoryItemId, inventoryItems.id))
+            .where(and(
+              eq(inventoryReservations.checkoutSessionId, row.order.checkoutSessionId),
+              eq(inventoryItems.status, "reserved"),
+            ))
+            .orderBy(asc(inventoryItems.createdAt))
+            .limit(row.order.quantity)
+        : [];
+      // The available fallback supports orders created before reservations were
+      // introduced. New checkouts always consume their own reserved stock.
+      const available = reserved.length === row.order.quantity ? reserved : await tx
         .select({
           id: inventoryItems.id,
           secretValue: inventoryItems.secretValue,
@@ -48,6 +62,7 @@ export async function fulfillAutomaticOrder(
         return { order: row.order, status: "waiting" };
       }
 
+      const expectedStatus = reserved.length === row.order.quantity ? "reserved" : "available";
       const claimed = await tx
         .update(inventoryItems)
         .set({
@@ -59,12 +74,20 @@ export async function fulfillAutomaticOrder(
         .where(
           and(
             inArray(inventoryItems.id, available.map((item) => item.id)),
-            eq(inventoryItems.status, "available"),
+            eq(inventoryItems.status, expectedStatus),
           ),
         )
         .returning({ secretValue: inventoryItems.secretValue });
       if (claimed.length !== row.order.quantity) {
         throw new Error(`Unable to claim inventory for order ${row.order.orderNumber}`);
+      }
+      if (row.order.checkoutSessionId) {
+        await tx.update(inventoryReservations)
+          .set({ releasedAt: new Date() })
+          .where(and(
+            eq(inventoryReservations.checkoutSessionId, row.order.checkoutSessionId),
+            isNull(inventoryReservations.releasedAt),
+          ));
       }
       deliveryInfo = claimed
         .map((item, index) =>

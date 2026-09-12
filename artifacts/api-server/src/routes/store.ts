@@ -40,6 +40,7 @@ import {
   db,
   flashSales,
   inventoryItems,
+  inventoryReservations,
   orders,
   paymentMethods,
   payments,
@@ -101,6 +102,20 @@ async function requireAdmin(req: Request, res: Response) {
     return null;
   }
   return admin;
+}
+
+type AuthenticatedAdmin = NonNullable<Awaited<ReturnType<typeof getAdminFromRequest>>>;
+
+function requireSuperAdmin(
+  admin: Awaited<ReturnType<typeof getAdminFromRequest>>,
+  res: Response,
+): admin is AuthenticatedAdmin {
+  if (!admin) return false;
+  if (admin.role !== "super_admin") {
+    res.status(403).json({ error: "Super admin access required" });
+    return false;
+  }
+  return true;
 }
 
 function productView(product: typeof products.$inferSelect, availableStock = 0) {
@@ -286,7 +301,7 @@ router.get("/products", async (req, res) => {
 
 router.post("/products", async (req, res) => {
   const admin = await requireAdmin(req, res);
-  if (!admin || admin.role !== "super_admin") return res;
+  if (!requireSuperAdmin(admin, res)) return;
   const parsed = CreateProductBody.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid product" });
   const row = await db
@@ -315,7 +330,7 @@ router.get("/products/:productId", async (req, res) => {
 
 router.patch("/products/:productId", async (req, res) => {
   const admin = await requireAdmin(req, res);
-  if (!admin || admin.role !== "super_admin") return res;
+  if (!requireSuperAdmin(admin, res)) return;
   const parsed = (await import("@workspace/api-zod")).UpdateProductBody.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid product" });
   const updateData: Partial<typeof products.$inferInsert> = {
@@ -423,7 +438,7 @@ router.get("/inventory", async (req, res) => {
 
 router.post("/inventory", async (req, res) => {
   const admin = await requireAdmin(req, res);
-  if (!admin || admin.role !== "super_admin") return res;
+  if (!requireSuperAdmin(admin, res)) return;
   const parsed = ImportInventoryBody.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid inventory import" });
   const submittedValues = parsed.data.values.map((value) => value.trim()).filter(Boolean);
@@ -438,39 +453,39 @@ router.post("/inventory", async (req, res) => {
   const fresh = values
     .map((value, index) => ({ value, hash: hashes[index] }))
     .filter((row) => !existingHashes.has(row.hash));
-  if (fresh.length > 0) {
-    await db.insert(inventoryItems).values(
+  const imported = fresh.length > 0
+    ? await db.insert(inventoryItems).values(
       fresh.map((item) => ({
         productId: parsed.data.productId,
         secretValue: item.value,
         valueHash: item.hash,
       })),
-    );
-  }
+    ).onConflictDoNothing({ target: inventoryItems.valueHash }).returning({ id: inventoryItems.id })
+    : [];
   const available = await db
     .select({ total: count() })
     .from(inventoryItems)
     .where(and(eq(inventoryItems.productId, parsed.data.productId), eq(inventoryItems.status, "available")));
   const product = await db.select().from(products).where(eq(products.id, parsed.data.productId)).limit(1);
-  if (fresh.length > 0 && product[0]?.active) {
-    void broadcastProductRestocked(product[0], fresh.length, Number(available[0]?.total ?? 0));
+  if (imported.length > 0 && product[0]?.active) {
+    void broadcastProductRestocked(product[0], imported.length, Number(available[0]?.total ?? 0));
   }
   res.status(201).json({
-    imported: fresh.length,
-    skippedDuplicates: submittedValues.length - fresh.length,
+    imported: imported.length,
+    skippedDuplicates: submittedValues.length - imported.length,
     available: Number(available[0]?.total ?? 0),
   });
 });
 
 router.post("/inventory/:inventoryId/disable", async (req, res) => {
   const admin = await requireAdmin(req, res);
-  if (!admin || admin.role !== "super_admin") return res;
+  if (!requireSuperAdmin(admin, res)) return;
   const rows = await db
     .update(inventoryItems)
     .set({ status: "disabled", updatedAt: new Date() })
-    .where(eq(inventoryItems.id, req.params.inventoryId))
+    .where(and(eq(inventoryItems.id, req.params.inventoryId), eq(inventoryItems.status, "available")))
     .returning();
-  if (!rows[0]) return res.status(404).json({ error: "Inventory item not found" });
+  if (!rows[0]) return res.status(409).json({ error: "Only available inventory can be disabled" });
   res.json({
     id: rows[0].id,
     productId: rows[0].productId,
@@ -551,10 +566,6 @@ router.post("/orders/:orderId/status", async (req, res) => {
     .where(and(eq(orders.id, req.params.orderId), eq(orders.status, current[0].status)))
     .returning();
   if (!rows[0]) return res.status(404).json({ error: "Order not found" });
-  if (rows[0].status === "paid") {
-    await issueReferralRewardForOrder(rows[0]);
-    await notifyOrderConfirmed(rows[0].id);
-  }
   const items = await listOrderRows(1, { page: 1, pageSize: 1, search: rows[0].orderNumber });
   res.json(items[0]);
 });
@@ -564,17 +575,31 @@ router.post("/orders/:orderId/deliver", async (req, res) => {
   if (!admin) return res;
   const parsed = DeliverOrderBody.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Delivery information is required" });
-  const rows = await db
-    .update(orders)
-    .set({ deliveryInfo: parsed.data.deliveryInfo, status: "delivered", deliveredAt: new Date(), updatedAt: new Date() })
-    .where(
-      and(
-        eq(orders.id, req.params.orderId),
-        inArray(orders.status, ["paid", "processing"]),
-      ),
-    )
-    .returning();
+  const rows = await db.transaction(async (tx) => {
+    const delivered = await tx.update(orders)
+      .set({ deliveryInfo: parsed.data.deliveryInfo, status: "delivered", deliveredAt: new Date(), updatedAt: new Date() })
+      .where(and(eq(orders.id, req.params.orderId), inArray(orders.status, ["paid", "processing"])))
+      .returning();
+    if (!delivered[0]?.checkoutSessionId) return delivered;
+    const reservations = await tx.update(inventoryReservations)
+      .set({ releasedAt: new Date() })
+      .where(and(
+        eq(inventoryReservations.checkoutSessionId, delivered[0].checkoutSessionId),
+        isNull(inventoryReservations.releasedAt),
+      ))
+      .returning({ inventoryItemId: inventoryReservations.inventoryItemId });
+    if (reservations.length) {
+      await tx.update(inventoryItems)
+        .set({ status: "delivered", orderId: delivered[0].id, deliveredAt: new Date(), updatedAt: new Date() })
+        .where(and(
+          inArray(inventoryItems.id, reservations.map((item) => item.inventoryItemId)),
+          eq(inventoryItems.status, "reserved"),
+        ));
+    }
+    return delivered;
+  });
   if (!rows[0]) return res.status(404).json({ error: "Order not found" });
+  await issueReferralRewardForOrder(rows[0]);
   await notifyOrderDelivered(rows[0].id);
   const items = await listOrderRows(1, { page: 1, pageSize: 1, search: rows[0].orderNumber });
   res.json(items[0]);
@@ -801,7 +826,6 @@ router.post("/payments/:paymentId/confirm", async (req, res) => {
   }
   if (!result) return res.status(409).json({ error: "Payment is already processed or missing" });
   if (result.newlyConfirmed) {
-    await issueReferralRewardForOrder(result.order);
     await notifyOrderConfirmed(result.order.id);
   }
   const items = await listPaymentRows(1, { page: 1, pageSize: 1 });
@@ -1010,7 +1034,7 @@ router.get("/flash-sales", async (req, res) => {
 
 router.post("/flash-sales", async (req, res) => {
   const admin = await requireAdmin(req, res);
-  if (!admin || admin.role !== "super_admin") return res;
+  if (!requireSuperAdmin(admin, res)) return;
   const parsed = CreateFlashSaleBody.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid flash sale" });
   const product = await db.select().from(products).where(eq(products.id, parsed.data.productId)).limit(1);
@@ -1055,7 +1079,7 @@ router.get("/promo-codes", async (req, res) => {
 
 router.post("/promo-codes", async (req, res) => {
   const admin = await requireAdmin(req, res);
-  if (!admin || admin.role !== "super_admin") return res;
+  if (!requireSuperAdmin(admin, res)) return;
   const parsed = CreatePromoCodeBody.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid promo code" });
   const rows = await db
@@ -1113,7 +1137,7 @@ router.get("/settings", async (req, res) => {
 
 router.patch("/settings", async (req, res) => {
   const admin = await requireAdmin(req, res);
-  if (!admin || admin.role !== "super_admin") return res;
+  if (!requireSuperAdmin(admin, res)) return;
   const parsed = UpdateStoreSettingsBody.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid settings" });
   const settings = await getOrCreateSettings();

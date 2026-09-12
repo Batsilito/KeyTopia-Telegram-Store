@@ -74,7 +74,12 @@ Binance payment method's `paymentIdentifier` must be the receiving Binance UID.
 ## Deployment checklist
 
 - Set the production `Neon_Connection` secret for the new store database.
+- Apply `lib/db/migrations/0001_production_safety.sql` once using the database
+  owner. It is additive and does not update or delete customer data; never use
+  `push-force` against production.
 - Set `SESSION_SECRET` to a unique random value.
+- Set `ADMIN_ALLOWED_ORIGINS` to the comma-separated HTTPS origins hosting the
+  admin dashboard.
 - Set the Super Admin bootstrap email/password, log in once, then remove the
   bootstrap password.
 - Add `TELEGRAM_BOT_TOKEN` and `TELEGRAM_WEBHOOK_SECRET` through workspace

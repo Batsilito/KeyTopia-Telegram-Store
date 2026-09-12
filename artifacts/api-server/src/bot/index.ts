@@ -1,14 +1,16 @@
 import { Bot, InlineKeyboard, InputFile, Keyboard, webhookCallback, type Context } from "grammy";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { and, count, desc, eq, gt, inArray, isNull, lte, or, sum } from "drizzle-orm";
 import {
   checkoutSessions,
   db,
   flashSales,
   inventoryItems,
+  inventoryReservations,
   orders,
+  orderRewardClaims,
   paymentMethods,
   payments,
   products,
@@ -27,11 +29,13 @@ import {
 } from "../lib/binance-topups";
 import { createBinanceFailureNotificationPlan } from "../lib/binance-verification";
 import { fulfillAutomaticOrder } from "../lib/order-fulfillment";
+import { calculatePercentageAmount, rewardsAreEligible } from "../lib/reward-policy";
 import { t, type BotLanguage } from "./locales";
 
 export const telegramBotToken = process.env.TELEGRAM_BOT_TOKEN;
 export const telegramBot = telegramBotToken ? new Bot(telegramBotToken) : null;
 let binanceProcessingPromise: Promise<void> | null = null;
+let schedulerStarted = false;
 
 function languageOf(user: typeof users.$inferSelect): BotLanguage {
   return user.language;
@@ -275,6 +279,9 @@ export async function notifyOrderConfirmed(orderId: string) {
   const fulfillment = await fulfillAutomaticOrder(orderId);
   if (!fulfillment) return false;
   await notifyAdminProductSold(fulfillment.order.id);
+  if (fulfillment.status === "delivered") {
+    await issueReferralRewardForOrder(fulfillment.order);
+  }
   if (!telegramBot) return false;
   if (fulfillment.status === "delivered" && fulfillment.order.deliveryInfo) {
     return notifyOrderDelivered(orderId);
@@ -401,12 +408,19 @@ export function broadcastFlashSale(
 }
 
 export async function notifyDueFlashSales() {
+  await db.update(flashSales)
+    .set({ status: "expired", updatedAt: new Date() })
+    .where(and(eq(flashSales.status, "active"), lte(flashSales.endsAt, new Date())));
   if (!telegramBot) return;
   const dueSales = await db
     .select({ sale: flashSales, product: products })
     .from(flashSales)
     .innerJoin(products, eq(flashSales.productId, products.id))
-    .where(and(eq(flashSales.status, "scheduled"), lte(flashSales.startsAt, new Date())));
+    .where(and(
+      eq(flashSales.status, "scheduled"),
+      lte(flashSales.startsAt, new Date()),
+      gt(flashSales.endsAt, new Date()),
+    ));
   for (const due of dueSales) {
     const activated = await db
       .update(flashSales)
@@ -415,6 +429,36 @@ export async function notifyDueFlashSales() {
       .returning();
     if (activated[0]) await broadcastFlashSale(activated[0], due.product);
   }
+}
+
+export async function releaseExpiredCheckouts() {
+  const expired = await db
+    .select({ id: checkoutSessions.id })
+    .from(checkoutSessions)
+    .where(and(eq(checkoutSessions.status, "pending"), lte(checkoutSessions.expiresAt, new Date())))
+    .limit(100);
+  for (const checkout of expired) {
+    await db.transaction(async (tx) => {
+      const cancelled = await tx.update(checkoutSessions)
+        .set({ status: "cancelled", updatedAt: new Date() })
+        .where(and(eq(checkoutSessions.id, checkout.id), eq(checkoutSessions.status, "pending")))
+        .returning({ id: checkoutSessions.id });
+      if (!cancelled[0]) return;
+      const reservations = await tx.update(inventoryReservations)
+        .set({ releasedAt: new Date() })
+        .where(and(eq(inventoryReservations.checkoutSessionId, checkout.id), isNull(inventoryReservations.releasedAt)))
+        .returning({ inventoryItemId: inventoryReservations.inventoryItemId });
+      if (reservations.length) {
+        await tx.update(inventoryItems)
+          .set({ status: "available", updatedAt: new Date() })
+          .where(and(
+            inArray(inventoryItems.id, reservations.map((item) => item.inventoryItemId)),
+            eq(inventoryItems.status, "reserved"),
+          ));
+      }
+    });
+  }
+  return expired.length;
 }
 
 export function processBinancePayments() {
@@ -440,11 +484,6 @@ export function processBinancePayments() {
           );
           await notifyAdminBinanceVerificationFailure(payment);
         } else if (payment.kind === "order") {
-          await issueReferralRewardForOrder({
-            id: payment.orderId,
-            userId: payment.userId,
-            orderNumber: payment.orderNumber,
-          });
           await notifyOrderConfirmed(payment.orderId);
         } else {
           await telegramBot!.api.sendMessage(
@@ -512,8 +551,10 @@ async function recoverOrderNotifications() {
 }
 
 export function startStoreNotificationScheduler() {
-  if (!telegramBot) return;
+  if (!telegramBot || schedulerStarted) return;
+  schedulerStarted = true;
   const run = async () => {
+    await releaseExpiredCheckouts();
     await notifyDueFlashSales();
     await recoverOrderNotifications();
     await processBinancePayments();
@@ -535,6 +576,49 @@ type ReferralRewardOrder = Pick<
 
 export async function issueReferralRewardForOrder(order: ReferralRewardOrder) {
   const issuedReward = await db.transaction(async (tx) => {
+    // Never trust the caller's lifecycle state: rewards only follow a committed
+    // delivery, and the claim table makes retries/concurrent workers harmless.
+    const deliveredOrders = await tx
+      .select({ id: orders.id, priceUsd: orders.priceUsd, status: orders.status })
+      .from(orders)
+      .where(eq(orders.id, order.id))
+      .limit(1);
+    const deliveredOrder = deliveredOrders[0];
+    if (!deliveredOrder || !rewardsAreEligible(deliveredOrder.status)) return null;
+
+    const settings = await tx
+      .select({
+        reward: storeSettings.referralRewardUsd,
+        cashbackPercent: storeSettings.cashbackPercent,
+      })
+      .from(storeSettings)
+      .limit(1);
+    const cashbackPercent = Number(settings[0]?.cashbackPercent ?? 0);
+    if (cashbackPercent > 0) {
+      const transactionId = randomUUID();
+      const claim = await tx
+        .insert(orderRewardClaims)
+        .values({ orderId: order.id, rewardType: "cashback", walletTransactionId: transactionId })
+        .onConflictDoNothing()
+        .returning({ id: orderRewardClaims.id });
+      if (claim[0]) {
+        const cashback = calculatePercentageAmount(deliveredOrder.priceUsd, cashbackPercent);
+        if (Number(cashback) > 0) {
+          await tx.insert(walletTransactions).values({
+            id: transactionId,
+            userId: order.userId,
+            orderId: order.id,
+            type: "cashback",
+            amountUsd: cashback,
+            reason: `Cashback for delivered order ${order.orderNumber}`,
+            reference: order.orderNumber,
+          });
+        } else {
+          await tx.delete(orderRewardClaims).where(eq(orderRewardClaims.id, claim[0].id));
+        }
+      }
+    }
+
     const candidates = await tx
       .select({
         referralId: referrals.id,
@@ -554,11 +638,8 @@ export async function issueReferralRewardForOrder(order: ReferralRewardOrder) {
     const candidate = candidates[0];
     if (!candidate) return null;
 
-    const settings = await tx
-      .select({ reward: storeSettings.referralRewardUsd })
-      .from(storeSettings)
-      .limit(1);
     const reward = settings[0]?.reward ?? "0";
+    if (Number(reward) <= 0) return null;
     const updated = await tx
       .update(referrals)
       .set({
@@ -574,7 +655,16 @@ export async function issueReferralRewardForOrder(order: ReferralRewardOrder) {
       .returning({ id: referrals.id });
     if (!updated[0]) return null;
 
+    const transactionId = randomUUID();
+    const claim = await tx.insert(orderRewardClaims).values({
+      orderId: order.id,
+      rewardType: "referral_reward",
+      walletTransactionId: transactionId,
+    }).onConflictDoNothing().returning({ id: orderRewardClaims.id });
+    if (!claim[0]) return null;
+
     await tx.insert(walletTransactions).values({
+      id: transactionId,
       userId: candidate.referrerId,
       orderId: order.id,
       type: "referral_reward",
@@ -1381,17 +1471,54 @@ async function beginCheckout(ctx: Context, user: typeof users.$inferSelect, prod
   }
   const total = (Number(product.priceUsd) * quantity).toFixed(2);
   const reference = `KT${Date.now().toString(36).toUpperCase()}${user.id.replaceAll("-", "").slice(0, 6).toUpperCase()}`;
-  const checkout = await db.insert(checkoutSessions).values({
-    reference,
-    userId: user.id,
-    productId: product.id,
-    productNameSnapshot: product.nameEn,
-    durationSnapshot: product.duration,
-    warrantySnapshot: product.warranty,
-    quantity,
-    priceUsd: total,
-    expiresAt: new Date(Date.now() + 5 * 60 * 1000),
-  }).returning();
+  const settings = await db
+    .select({ timeout: storeSettings.checkoutTimeoutMinutes })
+    .from(storeSettings)
+    .limit(1);
+  const timeoutMinutes = Math.min(60, Math.max(1, settings[0]?.timeout ?? 5));
+  const expiresAt = new Date(Date.now() + timeoutMinutes * 60 * 1000);
+  const checkout = await db.transaction(async (tx) => {
+    const checkoutId = randomUUID();
+    if (product.stockType === "limited") {
+      const candidates = await tx
+        .select({ id: inventoryItems.id })
+        .from(inventoryItems)
+        .where(and(eq(inventoryItems.productId, product.id), eq(inventoryItems.status, "available")))
+        .orderBy(inventoryItems.createdAt)
+        .limit(quantity);
+      if (candidates.length !== quantity) return [];
+      const reserved = await tx
+        .update(inventoryItems)
+        .set({ status: "reserved", updatedAt: new Date() })
+        .where(and(
+          inArray(inventoryItems.id, candidates.map((item) => item.id)),
+          eq(inventoryItems.status, "available"),
+        ))
+        .returning({ id: inventoryItems.id });
+      if (reserved.length !== quantity) return [];
+      await tx.insert(inventoryReservations).values(reserved.map((item) => ({
+        inventoryItemId: item.id,
+        checkoutSessionId: checkoutId,
+        expiresAt,
+      })));
+    }
+    return tx.insert(checkoutSessions).values({
+      id: checkoutId,
+      reference,
+      userId: user.id,
+      productId: product.id,
+      productNameSnapshot: product.nameEn,
+      durationSnapshot: product.duration,
+      warrantySnapshot: product.warranty,
+      quantity,
+      priceUsd: total,
+      expiresAt,
+    }).returning();
+  });
+  if (!checkout[0]) {
+    await ctx.reply(t(languageOf(user), "outOfStock"));
+    return;
+  }
   const methods = await db.select().from(paymentMethods).where(eq(paymentMethods.enabled, true));
   const language = languageOf(user);
   const keyboard = new InlineKeyboard();
@@ -1418,13 +1545,14 @@ async function beginCheckout(ctx: Context, user: typeof users.$inferSelect, prod
     `<b>${t(language, "paymentMethodsHeader")}</b>`,
     ...methodLines,
     "",
-    `⏱ <b>${t(language, "paymentWindow")}:</b> 5 minutes`,
+    `⏱ <b>${t(language, "paymentWindow")}:</b> ${timeoutMinutes} minutes`,
   ].join("\n");
   await ctx.reply(summary, { parse_mode: "HTML", reply_markup: keyboard });
 }
 
 async function cancelCheckout(ctx: Context, user: typeof users.$inferSelect, checkoutId: string) {
-  const cancelled = await db
+  const cancelled = await db.transaction(async (tx) => {
+    const rows = await tx
     .update(checkoutSessions)
     .set({ status: "cancelled", updatedAt: new Date() })
     .where(
@@ -1435,6 +1563,17 @@ async function cancelCheckout(ctx: Context, user: typeof users.$inferSelect, che
       ),
     )
     .returning({ id: checkoutSessions.id });
+    if (!rows[0]) return rows;
+    const released = await tx.update(inventoryReservations)
+      .set({ releasedAt: new Date() })
+      .where(and(eq(inventoryReservations.checkoutSessionId, checkoutId), isNull(inventoryReservations.releasedAt)))
+      .returning({ inventoryItemId: inventoryReservations.inventoryItemId });
+    if (released.length) {
+      await tx.update(inventoryItems).set({ status: "available", updatedAt: new Date() })
+        .where(and(inArray(inventoryItems.id, released.map((item) => item.inventoryItemId)), eq(inventoryItems.status, "reserved")));
+    }
+    return rows;
+  });
   await ctx.reply(
     cancelled[0]
       ? t(languageOf(user), "paymentCancelled")
@@ -1507,8 +1646,12 @@ async function acceptPaymentReference(ctx: Context, user: typeof users.$inferSel
     await ctx.reply(t(languageOf(user), "error"));
     return true;
   }
-  await db.transaction(async (tx) => {
-    await tx.update(checkoutSessions).set({ status: "submitted", submittedAt: new Date() }).where(eq(checkoutSessions.id, checkout[0].id));
+  const submitted = await db.transaction(async (tx) => {
+    const claimed = await tx.update(checkoutSessions)
+      .set({ status: "submitted", submittedAt: new Date() })
+      .where(and(eq(checkoutSessions.id, checkout[0].id), eq(checkoutSessions.status, "pending"), gt(checkoutSessions.expiresAt, new Date())))
+      .returning({ id: checkoutSessions.id });
+    if (!claimed[0]) return false;
     await tx.insert(payments).values({
       checkoutSessionId: checkout[0].id,
       userId: user.id,
@@ -1518,7 +1661,12 @@ async function acceptPaymentReference(ctx: Context, user: typeof users.$inferSel
       status: "submitted",
       submittedAt: new Date(),
     });
+    return true;
   });
+  if (!submitted) {
+    await ctx.reply(t(languageOf(user), "error"));
+    return true;
+  }
   await ctx.reply(t(languageOf(user), "paymentSubmitted"), { reply_markup: customerKeyboard(languageOf(user)) });
   if (checkout[0].paymentMethod === "binance") {
     scheduleBinancePaymentProcessing();
