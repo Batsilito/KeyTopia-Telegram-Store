@@ -98,9 +98,10 @@ export const GetDashboardOverviewResponse = zod.object({
 })),
   "recentTickets": zod.array(zod.object({
   "id": zod.string().uuid(),
+  "ticketNumber": zod.string(),
   "customerName": zod.string(),
   "subject": zod.string(),
-  "status": zod.enum(['open', 'waiting_customer', 'waiting_agent', 'closed']),
+  "status": zod.enum(['created', 'pending', 'closed']),
   "lastMessage": zod.string(),
   "updatedAt": zod.coerce.date()
 }))
@@ -616,15 +617,62 @@ export const ListSupportTicketsQueryParams = zod.object({
 export const ListSupportTicketsResponse = zod.object({
   "items": zod.array(zod.object({
   "id": zod.string().uuid(),
+  "ticketNumber": zod.string(),
   "customerName": zod.string(),
   "subject": zod.string(),
-  "status": zod.enum(['open', 'waiting_customer', 'waiting_agent', 'closed']),
+  "status": zod.enum(['created', 'pending', 'closed']),
   "lastMessage": zod.string(),
   "updatedAt": zod.coerce.date()
 })),
   "page": zod.number().int(),
   "pageSize": zod.number().int(),
   "total": zod.number().int()
+})
+
+
+/**
+ * @summary Get a support ticket conversation
+ */
+export const GetSupportTicketParams = zod.object({
+  "ticketId": zod.coerce.string().uuid()
+})
+
+export const GetSupportTicketResponse = zod.object({
+  "id": zod.string().uuid(),
+  "ticketNumber": zod.string(),
+  "customerName": zod.string(),
+  "subject": zod.string(),
+  "status": zod.enum(['created', 'pending', 'closed']),
+  "messages": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "ticketId": zod.string().uuid(),
+  "body": zod.string(),
+  "authorType": zod.enum(['customer', 'admin']),
+  "createdAt": zod.coerce.date()
+})),
+  "updatedAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary Update a support ticket status
+ */
+export const UpdateSupportTicketParams = zod.object({
+  "ticketId": zod.coerce.string().uuid()
+})
+
+export const UpdateSupportTicketBody = zod.object({
+  "status": zod.enum(['created', 'pending', 'closed'])
+})
+
+export const UpdateSupportTicketResponse = zod.object({
+  "id": zod.string().uuid(),
+  "ticketNumber": zod.string(),
+  "customerName": zod.string(),
+  "subject": zod.string(),
+  "status": zod.enum(['created', 'pending', 'closed']),
+  "lastMessage": zod.string(),
+  "updatedAt": zod.coerce.date()
 })
 
 

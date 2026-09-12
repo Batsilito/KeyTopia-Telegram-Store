@@ -6,10 +6,10 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export type SupportTicketStatus = typeof SupportTicketStatus[keyof typeof SupportTicketStatus];
+export type SupportTicketConversationStatus = typeof SupportTicketConversationStatus[keyof typeof SupportTicketConversationStatus];
 
 
-export const SupportTicketStatus = {
+export const SupportTicketConversationStatus = {
   created: 'created',
   pending: 'pending',
   closed: 'closed',

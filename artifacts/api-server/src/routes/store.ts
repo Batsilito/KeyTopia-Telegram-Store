@@ -1,5 +1,5 @@
 import { Router, type IRouter, type Request, type Response } from "express";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
   AdminLoginBody,
   CreateFlashSaleBody,
@@ -16,6 +16,7 @@ import {
   ListSupportTicketsQueryParams,
   RejectPaymentBody,
   ReplyToSupportTicketBody,
+  UpdateSupportTicketBody,
   UpdateOrderStatusBody,
   UpdateStoreSettingsBody,
 } from "@workspace/api-zod";
@@ -71,6 +72,10 @@ function numberValue(value: string | number | null | undefined) {
 
 function iso(value: Date | null | undefined) {
   return value?.toISOString() ?? null;
+}
+
+function createSupportTicketNumber() {
+  return `KT-${Date.now().toString(36).toUpperCase()}-${randomBytes(3).toString("hex").toUpperCase()}`;
 }
 
 function pageParams(input: {
@@ -190,7 +195,7 @@ router.get("/dashboard/overview", async (req, res) => {
       db
         .select({ total: count() })
         .from(supportTickets)
-        .where(inArray(supportTickets.status, ["open", "waiting_agent"])),
+        .where(inArray(supportTickets.status, ["created", "pending"])),
       db
         .select({ total: count() })
         .from(products)
@@ -703,12 +708,13 @@ router.get("/customers", async (req, res) => {
 });
 
 async function listTicketRows(limit = 20, status?: string) {
-  const condition = status && status !== "all" ? eq(supportTickets.status, status as "open") : undefined;
+  const condition = status && status !== "all" ? eq(supportTickets.status, status as "created" | "pending" | "closed") : undefined;
   const rows = await db.select({ ticket: supportTickets, user: users }).from(supportTickets).innerJoin(users, eq(supportTickets.userId, users.id)).where(condition).orderBy(desc(supportTickets.updatedAt)).limit(limit);
   const lastMessages = rows.length ? await db.select().from(supportMessages).where(inArray(supportMessages.ticketId, rows.map((row) => row.ticket.id))).orderBy(desc(supportMessages.createdAt)) : [];
   const lastByTicket = new Map(lastMessages.map((message) => [message.ticketId, message]));
   return rows.map((row) => ({
     id: row.ticket.id,
+    ticketNumber: row.ticket.ticketNumber ?? `KT-${row.ticket.id.replaceAll("-", "").slice(0, 10).toUpperCase()}`,
     customerName: `${row.user.firstName}${row.user.lastName ? ` ${row.user.lastName}` : ""}`,
     subject: row.ticket.subject,
     status: row.ticket.status,
@@ -728,13 +734,71 @@ router.get("/support/tickets", async (req, res) => {
   res.json({ items, page: params.page, pageSize: params.pageSize, total: Number(total[0]?.total ?? 0) });
 });
 
+router.get("/support/tickets/:ticketId", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return res;
+  const rows = await db
+    .select({ ticket: supportTickets, user: users })
+    .from(supportTickets)
+    .innerJoin(users, eq(supportTickets.userId, users.id))
+    .where(eq(supportTickets.id, req.params.ticketId))
+    .limit(1);
+  if (!rows[0]) return res.status(404).json({ error: "Support ticket not found" });
+  const messages = await db
+    .select()
+    .from(supportMessages)
+    .where(eq(supportMessages.ticketId, req.params.ticketId))
+    .orderBy(supportMessages.createdAt);
+  const ticket = rows[0].ticket;
+  res.json({
+    id: ticket.id,
+    ticketNumber: ticket.ticketNumber ?? `KT-${ticket.id.replaceAll("-", "").slice(0, 10).toUpperCase()}`,
+    customerName: `${rows[0].user.firstName}${rows[0].user.lastName ? ` ${rows[0].user.lastName}` : ""}`,
+    subject: ticket.subject,
+    status: ticket.status,
+    messages: messages.map((message) => ({
+      id: message.id,
+      ticketId: message.ticketId,
+      body: message.body,
+      authorType: message.authorType,
+      createdAt: message.createdAt.toISOString(),
+    })),
+    updatedAt: ticket.updatedAt.toISOString(),
+  });
+});
+
+router.patch("/support/tickets/:ticketId", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return res;
+  const parsed = UpdateSupportTicketBody.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "A valid status is required" });
+  const rows = await db
+    .update(supportTickets)
+    .set({ status: parsed.data.status, updatedAt: new Date(), assignedAdminId: admin.id })
+    .where(eq(supportTickets.id, req.params.ticketId))
+    .returning();
+  if (!rows[0]) return res.status(404).json({ error: "Support ticket not found" });
+  const ticket = rows[0];
+  const customer = await db.select().from(users).where(eq(users.id, ticket.userId)).limit(1);
+  if (!customer[0]) return res.status(404).json({ error: "Support ticket customer not found" });
+  res.json({
+    id: ticket.id,
+    ticketNumber: ticket.ticketNumber ?? `KT-${ticket.id.replaceAll("-", "").slice(0, 10).toUpperCase()}`,
+    customerName: `${customer[0].firstName}${customer[0].lastName ? ` ${customer[0].lastName}` : ""}`,
+    subject: ticket.subject,
+    status: ticket.status,
+    lastMessage: "No messages yet",
+    updatedAt: ticket.updatedAt.toISOString(),
+  });
+});
+
 router.post("/support/tickets/:ticketId/messages", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return res;
   const parsed = ReplyToSupportTicketBody.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Message is required" });
   const message = await db.insert(supportMessages).values({ ticketId: req.params.ticketId, authorType: "admin", authorAdminId: admin.id, body: parsed.data.body }).returning();
-  await db.update(supportTickets).set({ status: "waiting_customer", updatedAt: new Date(), assignedAdminId: admin.id }).where(eq(supportTickets.id, req.params.ticketId));
+  await db.update(supportTickets).set({ status: "pending", updatedAt: new Date(), assignedAdminId: admin.id }).where(eq(supportTickets.id, req.params.ticketId));
   res.status(201).json({
     id: message[0].id,
     ticketId: message[0].ticketId,

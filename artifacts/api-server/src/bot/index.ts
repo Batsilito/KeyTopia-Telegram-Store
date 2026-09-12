@@ -1,6 +1,7 @@
 import { Bot, InlineKeyboard, InputFile, Keyboard, webhookCallback, type Context } from "grammy";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { randomBytes } from "node:crypto";
 import { and, count, desc, eq, gt, lte, sum } from "drizzle-orm";
 import {
   checkoutSessions,
@@ -297,6 +298,10 @@ function paymentMethodDescription(method: string, language: BotLanguage) {
 
 const supportDraftUsers = new Set<string>();
 
+function createSupportTicketNumber() {
+  return `KT-${Date.now().toString(36).toUpperCase()}-${randomBytes(3).toString("hex").toUpperCase()}`;
+}
+
 async function findOrCreateCustomer(ctx: Context) {
   const from = ctx.from;
   if (!from) return null;
@@ -521,15 +526,18 @@ async function acceptSupportMessage(ctx: Context, user: typeof users.$inferSelec
   if (!supportDraftUsers.has(user.id)) return false;
   supportDraftUsers.delete(user.id);
   const ticket = await db.insert(supportTickets).values({
+    ticketNumber: createSupportTicketNumber(),
     userId: user.id,
     subject: "Telegram support request",
+    status: "created",
   }).returning();
   await db.insert(supportMessages).values({
     ticketId: ticket[0].id,
     authorType: "customer",
     body,
   });
-  await ctx.reply(t(languageOf(user), "supportTicketCreated"), {
+  await ctx.reply(`${t(languageOf(user), "supportTicketCreated")}\n\n<b>${t(languageOf(user), "ticketNumber")}:</b> <code>${escapeHtml(ticket[0].ticketNumber)}</code>`, {
+    parse_mode: "HTML",
     reply_markup: customerKeyboard(languageOf(user)),
   });
   return true;

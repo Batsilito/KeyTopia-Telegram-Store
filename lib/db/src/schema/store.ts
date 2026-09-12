@@ -53,9 +53,8 @@ export const paymentStatusEnum = pgEnum("payment_status", [
   "cancelled",
 ]);
 export const supportStatusEnum = pgEnum("support_status", [
-  "open",
-  "waiting_customer",
-  "waiting_agent",
+  "created",
+  "pending",
   "closed",
 ]);
 export const flashSaleStatusEnum = pgEnum("flash_sale_status", [
@@ -328,13 +327,16 @@ export const referrals = pgTable("referrals", {
 
 export const supportTickets = pgTable("support_tickets", {
   id: id(),
+  ticketNumber: text("ticket_number").notNull(),
   userId: uuid("user_id").notNull(),
   assignedAdminId: uuid("assigned_admin_id"),
   subject: text("subject").notNull(),
-  status: supportStatusEnum("status").default("open").notNull(),
+  status: supportStatusEnum("status").default("created").notNull(),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
-});
+}, (table) => ({
+  ticketNumberIdx: uniqueIndex("support_tickets_ticket_number_idx").on(table.ticketNumber),
+}));
 
 export const supportMessages = pgTable("support_messages", {
   id: id(),

@@ -9,6 +9,7 @@ import type { SupportTicketStatus } from './supportTicketStatus';
 
 export interface SupportTicket {
   id: string;
+  ticketNumber: string;
   customerName: string;
   subject: string;
   status: SupportTicketStatus;

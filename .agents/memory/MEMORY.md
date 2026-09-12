@@ -1,1 +1,2 @@
 - [Telegram bot bundling](grammy-bundling.md) — keep grammY external to the API esbuild bundle so its optional Node platform module resolves at runtime.
+- [Store schema database](neon-schema-migrations.md) — this app’s runtime schema is on Neon_Connection; the separate Replit database is not the store database.

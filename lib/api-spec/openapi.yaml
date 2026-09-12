@@ -403,6 +403,39 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SupportTicketPage"
+  /support/tickets/{ticketId}:
+    get:
+      operationId: getSupportTicket
+      tags: [support]
+      summary: Get a support ticket conversation
+      parameters:
+        - $ref: "#/components/parameters/TicketId"
+      responses:
+        "200":
+          description: Support ticket conversation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupportTicketConversation"
+    patch:
+      operationId: updateSupportTicket
+      tags: [support]
+      summary: Update a support ticket status
+      parameters:
+        - $ref: "#/components/parameters/TicketId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SupportTicketUpdate"
+      responses:
+        "200":
+          description: Updated support ticket
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupportTicket"
   /support/tickets/{ticketId}/messages:
     post:
       operationId: replyToSupportTicket
@@ -833,14 +866,15 @@ components:
       type: object
       properties:
         id: { type: string, format: uuid }
+        ticketNumber: { type: string }
         customerName: { type: string }
         subject: { type: string }
         status:
           type: string
-          enum: [open, waiting_customer, waiting_agent, closed]
+          enum: [created, pending, closed]
         lastMessage: { type: string }
         updatedAt: { type: string, format: date-time }
-      required: [id, customerName, subject, status, lastMessage, updatedAt]
+      required: [id, ticketNumber, customerName, subject, status, lastMessage, updatedAt]
     SupportTicketPage:
       type: object
       properties:
@@ -851,6 +885,28 @@ components:
         pageSize: { type: integer }
         total: { type: integer }
       required: [items, page, pageSize, total]
+    SupportTicketConversation:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        ticketNumber: { type: string }
+        customerName: { type: string }
+        subject: { type: string }
+        status:
+          type: string
+          enum: [created, pending, closed]
+        messages:
+          type: array
+          items: { $ref: "#/components/schemas/SupportMessage" }
+        updatedAt: { type: string, format: date-time }
+      required: [id, ticketNumber, customerName, subject, status, messages, updatedAt]
+    SupportTicketUpdate:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [created, pending, closed]
+      required: [status]
     SupportMessageInput:
       type: object
       properties:

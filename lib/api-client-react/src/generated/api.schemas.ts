@@ -363,14 +363,14 @@ export type SupportTicketStatus = typeof SupportTicketStatus[keyof typeof Suppor
 
 
 export const SupportTicketStatus = {
-  open: 'open',
-  waiting_customer: 'waiting_customer',
-  waiting_agent: 'waiting_agent',
+  created: 'created',
+  pending: 'pending',
   closed: 'closed',
 } as const;
 
 export interface SupportTicket {
   id: string;
+  ticketNumber: string;
   customerName: string;
   subject: string;
   status: SupportTicketStatus;
@@ -385,10 +385,14 @@ export interface SupportTicketPage {
   total: number;
 }
 
-export interface SupportMessageInput {
-  /** @minLength 1 */
-  body: string;
-}
+export type SupportTicketConversationStatus = typeof SupportTicketConversationStatus[keyof typeof SupportTicketConversationStatus];
+
+
+export const SupportTicketConversationStatus = {
+  created: 'created',
+  pending: 'pending',
+  closed: 'closed',
+} as const;
 
 export type SupportMessageAuthorType = typeof SupportMessageAuthorType[keyof typeof SupportMessageAuthorType];
 
@@ -404,6 +408,34 @@ export interface SupportMessage {
   body: string;
   authorType: SupportMessageAuthorType;
   createdAt: string;
+}
+
+export interface SupportTicketConversation {
+  id: string;
+  ticketNumber: string;
+  customerName: string;
+  subject: string;
+  status: SupportTicketConversationStatus;
+  messages: SupportMessage[];
+  updatedAt: string;
+}
+
+export type SupportTicketUpdateStatus = typeof SupportTicketUpdateStatus[keyof typeof SupportTicketUpdateStatus];
+
+
+export const SupportTicketUpdateStatus = {
+  created: 'created',
+  pending: 'pending',
+  closed: 'closed',
+} as const;
+
+export interface SupportTicketUpdate {
+  status: SupportTicketUpdateStatus;
+}
+
+export interface SupportMessageInput {
+  /** @minLength 1 */
+  body: string;
 }
 
 export type FlashSaleStatus = typeof FlashSaleStatus[keyof typeof FlashSaleStatus];
