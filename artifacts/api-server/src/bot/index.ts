@@ -81,6 +81,34 @@ function escapeHtml(value: string) {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 }
 
+export async function sendSupportReply(
+  user: typeof users.$inferSelect,
+  ticketNumber: string,
+  body: string,
+) {
+  if (!telegramBot) return false;
+  try {
+    await telegramBot.api.sendMessage(
+      user.telegramUserId,
+      [
+        `<b>${t(user.language, "supportAdminReply")}</b>`,
+        "",
+        `<b>${t(user.language, "ticketNumber")}:</b> <code>${escapeHtml(ticketNumber)}</code>`,
+        "",
+        escapeHtml(body),
+      ].join("\n"),
+      {
+        parse_mode: "HTML",
+        reply_markup: customerKeyboard(user.language),
+      },
+    );
+    return true;
+  } catch (error) {
+    logger.warn({ err: error, telegramUserId: user.telegramUserId, ticketNumber }, "Unable to deliver admin support reply to Telegram");
+    return false;
+  }
+}
+
 type BroadcastRecipient = {
   telegramUserId: string;
   language: BotLanguage;

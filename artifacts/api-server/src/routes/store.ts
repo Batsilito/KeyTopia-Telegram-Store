@@ -62,6 +62,7 @@ import {
   broadcastNewProduct,
   broadcastProductRestocked,
   issueReferralRewardForOrder,
+  sendSupportReply,
 } from "../bot";
 
 const router: IRouter = Router();
@@ -798,7 +799,13 @@ router.post("/support/tickets/:ticketId/messages", async (req, res) => {
   const parsed = ReplyToSupportTicketBody.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Message is required" });
   const message = await db.insert(supportMessages).values({ ticketId: req.params.ticketId, authorType: "admin", authorAdminId: admin.id, body: parsed.data.body }).returning();
-  await db.update(supportTickets).set({ status: "pending", updatedAt: new Date(), assignedAdminId: admin.id }).where(eq(supportTickets.id, req.params.ticketId));
+  const ticket = await db.update(supportTickets).set({ status: "pending", updatedAt: new Date(), assignedAdminId: admin.id }).where(eq(supportTickets.id, req.params.ticketId)).returning();
+  const customer = ticket[0]
+    ? await db.select().from(users).where(eq(users.id, ticket[0].userId)).limit(1)
+    : [];
+  if (ticket[0] && customer[0]) {
+    await sendSupportReply(customer[0], ticket[0].ticketNumber, message[0].body);
+  }
   res.status(201).json({
     id: message[0].id,
     ticketId: message[0].ticketId,
