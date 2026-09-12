@@ -420,7 +420,7 @@ async function showPayment(ctx: Context, user: typeof users.$inferSelect, checko
     instructions,
     `Reference: ${checkout[0].reference}`,
     `${t(language, "quantity")}: ${checkout[0].quantity}`,
-    `${t(language, "price")}: $${checkout[0].priceUsd}`,
+    `${t(language, "price")}: ${checkout[0].priceUsd} USDT`,
     config[0].paymentIdentifier ? `Recipient: ${config[0].paymentIdentifier}` : "",
   ].filter(Boolean).join("\n");
   const logoPath = paymentLogoPath(method);
@@ -513,7 +513,7 @@ export function buildTelegramBot() {
       return;
     }
     if (data === "shop:noop") return;
-    if (data === "nav:orders" || data === "nav:wallet" || data === "nav:checkout" || data === "nav:channel") {
+    if (data === "nav:orders" || data === "nav:wallet" || data === "nav:checkout" || data === "nav:channel" || data === "nav:support") {
       await ctx.reply(t(languageOf(user), "comingSoon"));
       return;
     }
