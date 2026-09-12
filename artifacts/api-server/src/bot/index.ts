@@ -102,6 +102,7 @@ export async function sendSupportReply(
         reply_markup: customerKeyboard(user.language),
       },
     );
+    logger.info({ ticketNumber }, "Delivered admin support reply to Telegram");
     return true;
   } catch (error) {
     logger.warn({ err: error, telegramUserId: user.telegramUserId, ticketNumber }, "Unable to deliver admin support reply to Telegram");
@@ -540,8 +541,92 @@ async function showSupport(ctx: Context, user: typeof users.$inferSelect) {
     reply_markup: new InlineKeyboard()
       .text(t(language, "supportWrite"), "support:write")
       .row()
+      .text(t(language, "supportTickets"), "support:list")
+      .row()
       .text(t(language, "mainMenu"), "nav:home"),
   });
+}
+
+function supportStatusLabel(status: "created" | "pending" | "closed", language: BotLanguage) {
+  const labels = {
+    en: { created: "Created", pending: "Pending", closed: "Closed" },
+    ar: { created: "جديدة", pending: "قيد المتابعة", closed: "مغلقة" },
+  } as const;
+  return labels[language][status];
+}
+
+async function showSupportTickets(ctx: Context, user: typeof users.$inferSelect) {
+  if (!(await ensureAccess(ctx, user))) return;
+  const language = languageOf(user);
+  const tickets = await db
+    .select()
+    .from(supportTickets)
+    .where(eq(supportTickets.userId, user.id))
+    .orderBy(desc(supportTickets.updatedAt));
+  const keyboard = new InlineKeyboard();
+  for (const ticket of tickets) {
+    keyboard.text(
+      `${ticket.ticketNumber} · ${supportStatusLabel(ticket.status, language)}`,
+      `support:ticket:${ticket.id}`,
+    ).row();
+  }
+  keyboard.text(t(language, "supportWrite"), "support:write").row();
+  keyboard.text(t(language, "mainMenu"), "nav:home");
+  await ctx.reply(
+    `<b>${t(language, "supportTickets")}</b>\n\n${tickets.length ? "" : t(language, "noSupportTickets")}`,
+    { parse_mode: "HTML", reply_markup: keyboard },
+  );
+}
+
+async function showSupportTicket(ctx: Context, user: typeof users.$inferSelect, ticketId: string) {
+  if (!(await ensureAccess(ctx, user))) return;
+  const language = languageOf(user);
+  const ticketRows = await db
+    .select()
+    .from(supportTickets)
+    .where(and(eq(supportTickets.id, ticketId), eq(supportTickets.userId, user.id)))
+    .limit(1);
+  if (!ticketRows[0]) {
+    await ctx.reply(t(language, "supportTicketNotFound"), {
+      reply_markup: new InlineKeyboard().text(t(language, "supportTickets"), "support:list"),
+    });
+    return;
+  }
+  const messages = await db
+    .select()
+    .from(supportMessages)
+    .where(eq(supportMessages.ticketId, ticketId))
+    .orderBy(supportMessages.createdAt);
+  const ticket = ticketRows[0];
+  const sections = [
+    `<b>${t(language, "supportConversation")}</b>\n\n<b>${escapeHtml(ticket.ticketNumber)}</b>\n${t(language, "status")}: ${supportStatusLabel(ticket.status, language)}`,
+    ...messages.map((message) => {
+      const author = message.authorType === "admin" ? t(language, "supportAgent") : t(language, "supportCustomer");
+      return `<b>${escapeHtml(author)}</b>\n${escapeHtml(message.body)}`;
+    }),
+  ];
+  const chunks: string[] = [];
+  let current = "";
+  for (const section of sections) {
+    if (current && current.length + section.length + 2 > 3800) {
+      chunks.push(current);
+      current = "";
+    }
+    current = current ? `${current}\n\n${section}` : section;
+  }
+  if (current) chunks.push(current);
+  const keyboard = new InlineKeyboard()
+    .text(t(language, "supportTickets"), "support:list")
+    .row()
+    .text(t(language, "supportWrite"), "support:write")
+    .row()
+    .text(t(language, "mainMenu"), "nav:home");
+  for (let index = 0; index < chunks.length; index += 1) {
+    await ctx.reply(chunks[index], {
+      parse_mode: "HTML",
+      reply_markup: index === chunks.length - 1 ? keyboard : undefined,
+    });
+  }
 }
 
 async function showReferral(ctx: Context, user: typeof users.$inferSelect) {
@@ -937,6 +1022,14 @@ export function buildTelegramBot() {
     }
     if (data === "nav:support") {
       await showSupport(ctx, user);
+      return;
+    }
+    if (data === "support:list") {
+      await showSupportTickets(ctx, user);
+      return;
+    }
+    if (data.startsWith("support:ticket:")) {
+      await showSupportTicket(ctx, user, data.slice("support:ticket:".length));
       return;
     }
     if (data === "nav:refer") {
