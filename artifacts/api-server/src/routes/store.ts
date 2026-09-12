@@ -57,7 +57,11 @@ import {
   getAdminFromRequest,
   setSessionCookie,
 } from "../lib/admin-auth";
-import { broadcastNewProduct, broadcastProductRestocked } from "../bot";
+import {
+  broadcastNewProduct,
+  broadcastProductRestocked,
+  issueReferralRewardForOrder,
+} from "../bot";
 
 const router: IRouter = Router();
 
@@ -508,6 +512,9 @@ router.post("/orders/:orderId/status", async (req, res) => {
   if (!parsed.success) return res.status(400).json({ error: "Invalid order status" });
   const rows = await db.update(orders).set({ status: parsed.data.status, updatedAt: new Date() }).where(eq(orders.id, req.params.orderId)).returning();
   if (!rows[0]) return res.status(404).json({ error: "Order not found" });
+  if (rows[0].status === "paid") {
+    await issueReferralRewardForOrder(rows[0]);
+  }
   const items = await listOrderRows(1, { page: 1, pageSize: 1, search: rows[0].orderNumber });
   res.json(items[0]);
 });
@@ -565,10 +572,93 @@ router.get("/payments", async (req, res) => {
 router.post("/payments/:paymentId/confirm", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return res;
-  const rows = await db.update(payments).set({ status: "confirmed", reviewedBy: admin.id, reviewedAt: new Date(), updatedAt: new Date() }).where(and(eq(payments.id, req.params.paymentId), inArray(payments.status, ["pending", "submitted"]))).returning();
-  if (!rows[0]) return res.status(409).json({ error: "Payment is already processed or missing" });
+  const result = await db.transaction(async (tx) => {
+    const paymentRows = await tx
+      .update(payments)
+      .set({
+        status: "confirmed",
+        reviewedBy: admin.id,
+        reviewedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(payments.id, req.params.paymentId),
+          inArray(payments.status, ["pending", "submitted"]),
+        ),
+      )
+      .returning();
+    const payment = paymentRows[0];
+    if (!payment) {
+      const existingRows = await tx
+        .select()
+        .from(payments)
+        .where(eq(payments.id, req.params.paymentId))
+        .limit(1);
+      const existingPayment = existingRows[0];
+      if (!existingPayment || existingPayment.status !== "confirmed" || !existingPayment.orderId) {
+        return null;
+      }
+      const existingOrderRows = await tx
+        .select()
+        .from(orders)
+        .where(eq(orders.id, existingPayment.orderId))
+        .limit(1);
+      const existingOrder = existingOrderRows[0];
+      return existingOrder ? { payment: existingPayment, order: existingOrder } : null;
+    }
+
+    const checkoutRows = await tx
+      .select({
+        checkout: checkoutSessions,
+        deliveryType: products.deliveryType,
+      })
+      .from(checkoutSessions)
+      .innerJoin(products, eq(checkoutSessions.productId, products.id))
+      .where(eq(checkoutSessions.id, payment.checkoutSessionId))
+      .limit(1);
+    const checkout = checkoutRows[0];
+    if (!checkout) {
+      throw new Error(`Checkout session ${payment.checkoutSessionId} is missing`);
+    }
+
+    const orderRows = await tx
+      .insert(orders)
+      .values({
+        orderNumber: checkout.checkout.reference,
+        userId: payment.userId,
+        productId: checkout.checkout.productId,
+        checkoutSessionId: checkout.checkout.id,
+        productNameSnapshot: checkout.checkout.productNameSnapshot,
+        durationSnapshot: checkout.checkout.durationSnapshot,
+        warrantySnapshot: checkout.checkout.warrantySnapshot,
+        quantity: checkout.checkout.quantity,
+        priceUsd: checkout.checkout.priceUsd,
+        egpAmount: payment.egpAmount,
+        exchangeRate: payment.exchangeRate,
+        paymentMethod: payment.paymentMethod,
+        status: "paid",
+        deliveryType: checkout.deliveryType,
+      })
+      .returning();
+    const order = orderRows[0];
+    if (!order) throw new Error("Unable to create paid order");
+
+    await tx
+      .update(payments)
+      .set({ orderId: order.id, updatedAt: new Date() })
+      .where(eq(payments.id, payment.id));
+    await tx
+      .update(checkoutSessions)
+      .set({ status: "confirmed", updatedAt: new Date() })
+      .where(eq(checkoutSessions.id, checkout.checkout.id));
+
+    return { payment, order };
+  });
+  if (!result) return res.status(409).json({ error: "Payment is already processed or missing" });
+  await issueReferralRewardForOrder(result.order);
   const items = await listPaymentRows(1, { page: 1, pageSize: 1 });
-  res.json(items.find((item) => item.id === rows[0].id) ?? { id: rows[0].id });
+  res.json(items.find((item) => item.id === result.payment.id) ?? { id: result.payment.id });
 });
 
 router.post("/payments/:paymentId/reject", async (req, res) => {

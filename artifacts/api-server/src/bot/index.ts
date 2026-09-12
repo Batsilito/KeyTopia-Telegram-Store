@@ -7,6 +7,7 @@ import {
   db,
   flashSales,
   inventoryItems,
+  orders,
   paymentMethods,
   payments,
   products,
@@ -189,6 +190,87 @@ export function startStoreNotificationScheduler() {
   run();
   const interval = setInterval(run, 30_000);
   interval.unref();
+}
+
+type ReferralRewardOrder = Pick<
+  typeof orders.$inferSelect,
+  "id" | "userId" | "orderNumber"
+>;
+
+export async function issueReferralRewardForOrder(order: ReferralRewardOrder) {
+  const issuedReward = await db.transaction(async (tx) => {
+    const candidates = await tx
+      .select({
+        referralId: referrals.id,
+        referrerId: users.id,
+        referrerTelegramUserId: users.telegramUserId,
+        referrerLanguage: users.language,
+      })
+      .from(referrals)
+      .innerJoin(users, eq(referrals.referrerId, users.id))
+      .where(
+        and(
+          eq(referrals.referredUserId, order.userId),
+          eq(referrals.rewardIssued, false),
+        ),
+      )
+      .limit(1);
+    const candidate = candidates[0];
+    if (!candidate) return null;
+
+    const settings = await tx
+      .select({ reward: storeSettings.referralRewardUsd })
+      .from(storeSettings)
+      .limit(1);
+    const reward = settings[0]?.reward ?? "0";
+    const updated = await tx
+      .update(referrals)
+      .set({
+        rewardIssued: true,
+        qualifyingOrderId: order.id,
+      })
+      .where(
+        and(
+          eq(referrals.id, candidate.referralId),
+          eq(referrals.rewardIssued, false),
+        ),
+      )
+      .returning({ id: referrals.id });
+    if (!updated[0]) return null;
+
+    await tx.insert(walletTransactions).values({
+      userId: candidate.referrerId,
+      orderId: order.id,
+      type: "referral_reward",
+      amountUsd: reward,
+      reason: `Referral reward for order ${order.orderNumber}`,
+      reference: order.orderNumber,
+    });
+
+    return {
+      amount: Number(reward),
+      telegramUserId: candidate.referrerTelegramUserId,
+      language: candidate.referrerLanguage,
+    };
+  });
+
+  if (!issuedReward || !telegramBot) return issuedReward;
+
+  const message = t(issuedReward.language, "referralRewardIssued")
+    .replace("{amount}", issuedReward.amount.toFixed(2))
+    .replace("{order}", escapeHtml(order.orderNumber));
+  try {
+    await telegramBot.api.sendMessage(issuedReward.telegramUserId, message, {
+      parse_mode: "HTML",
+      reply_markup: customerKeyboard(issuedReward.language),
+    });
+  } catch (error) {
+    logger.warn(
+      { err: error, orderId: order.id, telegramUserId: issuedReward.telegramUserId },
+      "Unable to send referral reward notification",
+    );
+  }
+  return issuedReward;
 }
 
 function paymentMethodDescription(method: string, language: BotLanguage) {
