@@ -39,8 +39,10 @@ Use the same value from `TELEGRAM_WEBHOOK_SECRET` when calling Telegram's
 `setWebhook` API. The service validates
 `X-Telegram-Bot-Api-Secret-Token` before passing updates to grammY.
 
-Development uses long polling automatically when `TELEGRAM_BOT_TOKEN` is set.
-Do not run polling and a production webhook for the same bot at the same time.
+Development polling is disabled by default so a development workflow cannot
+steal updates from the published webhook. To explicitly run a separate bot
+polling session during development, set `TELEGRAM_DEV_POLLING=true`. Do not run
+polling and a production webhook for the same bot at the same time.
 
 ## Independent admin access
 

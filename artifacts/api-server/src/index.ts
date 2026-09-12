@@ -25,7 +25,10 @@ app.listen(port, (err) => {
   logger.info({ port }, "Server listening");
   const bot = buildTelegramBot();
   startStoreNotificationScheduler();
-  if (bot && process.env.NODE_ENV !== "production") {
+  const developmentPollingEnabled =
+    process.env.NODE_ENV !== "production" &&
+    process.env.TELEGRAM_DEV_POLLING === "true";
+  if (bot && developmentPollingEnabled) {
     void (async () => {
       try {
         const botInfo = await bot.api.getMe();
