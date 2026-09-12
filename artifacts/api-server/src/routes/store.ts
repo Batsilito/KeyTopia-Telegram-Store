@@ -572,7 +572,7 @@ async function listPaymentRows(limit = 20, params?: { page: number; pageSize: nu
     .from(payments)
     .innerJoin(users, eq(payments.userId, users.id))
     .innerJoin(checkoutSessions, eq(payments.checkoutSessionId, checkoutSessions.id))
-    .innerJoin(products, eq(checkoutSessions.productId, products.id))
+    .leftJoin(products, eq(checkoutSessions.productId, products.id))
     .where(conditions.length ? and(...conditions) : undefined)
     .orderBy(desc(payments.createdAt))
     .limit(params ? params.pageSize : limit)
@@ -581,7 +581,7 @@ async function listPaymentRows(limit = 20, params?: { page: number; pageSize: nu
     id: row.payment.id,
     orderNumber: null,
     customerName: `${row.user.firstName}${row.user.lastName ? ` ${row.user.lastName}` : ""}`,
-    productName: row.product.nameEn,
+    productName: row.product?.nameEn ?? "Product no longer available",
     paymentMethod: row.payment.paymentMethod,
     usdAmount: numberValue(row.payment.usdAmount),
     egpAmount: row.payment.egpAmount ? numberValue(row.payment.egpAmount) : null,
