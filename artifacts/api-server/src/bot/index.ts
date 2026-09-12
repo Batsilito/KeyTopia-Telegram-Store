@@ -1,7 +1,7 @@
 import { Bot, InlineKeyboard, InputFile, Keyboard, webhookCallback, type Context } from "grammy";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { and, count, desc, eq, gt, lte } from "drizzle-orm";
+import { and, count, desc, eq, gt, lte, sum } from "drizzle-orm";
 import {
   checkoutSessions,
   db,
@@ -11,6 +11,7 @@ import {
   payments,
   products,
   storeSettings,
+  walletTransactions,
   users,
 } from "@workspace/db";
 import { logger } from "../lib/logger";
@@ -289,6 +290,74 @@ async function showHome(ctx: Context, user: typeof users.$inferSelect) {
   const language = languageOf(user);
   await ctx.reply(t(language, "welcome"), {
     reply_markup: customerKeyboard(language),
+  });
+}
+
+async function showWallet(ctx: Context, user: typeof users.$inferSelect) {
+  if (!(await ensureAccess(ctx, user))) return;
+  const language = languageOf(user);
+  const rows = await db
+    .select({ balance: sum(walletTransactions.amountUsd) })
+    .from(walletTransactions)
+    .where(eq(walletTransactions.userId, user.id));
+  const balance = Number(rows[0]?.balance ?? 0).toFixed(2);
+  const keyboard = new InlineKeyboard()
+    .text(t(language, "topUpWallet"), "wallet:topup")
+    .row()
+    .text(t(language, "mainMenu"), "nav:home");
+  await ctx.reply(
+    `<b>${t(language, "wallet")}</b>\n\n💵 <b>${t(language, "walletBalance")}:</b> ${balance} USDT`,
+    { parse_mode: "HTML", reply_markup: keyboard },
+  );
+}
+
+async function showWalletTopup(ctx: Context, user: typeof users.$inferSelect) {
+  if (!(await ensureAccess(ctx, user))) return;
+  const language = languageOf(user);
+  const methods = await db.select().from(paymentMethods).where(eq(paymentMethods.enabled, true));
+  const keyboard = new InlineKeyboard();
+  for (const method of methods) {
+    keyboard.text(paymentMethodLabel(method.method), `wallet:method:${method.method}`).row();
+  }
+  keyboard.text(t(language, "backToWallet"), "nav:wallet").row();
+  const methodText = methods.length
+    ? methods.map((method) => `• <b>${escapeHtml(paymentMethodLabel(method.method))}</b> ${escapeHtml(paymentMethodDescription(method.method, language))}`).join("\n")
+    : t(language, "paymentUnavailable");
+  await ctx.reply(
+    `<b>${t(language, "topUpWallet")}</b>\n\n${t(language, "topUpIntro")}\n\n${methodText}`,
+    { parse_mode: "HTML", reply_markup: keyboard },
+  );
+}
+
+async function showWalletPaymentMethod(
+  ctx: Context,
+  user: typeof users.$inferSelect,
+  method: "binance" | "bybit" | "vodafone_cash" | "instapay",
+) {
+  if (!(await ensureAccess(ctx, user))) return;
+  const language = languageOf(user);
+  const config = await db
+    .select()
+    .from(paymentMethods)
+    .where(and(eq(paymentMethods.method, method), eq(paymentMethods.enabled, true)))
+    .limit(1);
+  if (!config[0]) {
+    await ctx.reply(t(language, "paymentUnavailable"));
+    return;
+  }
+  const instructions = language === "ar" ? config[0].instructionsAr : config[0].instructionsEn;
+  const details = [
+    `<b>${t(language, "topUpInstructions")}</b>`,
+    "",
+    `<b>${escapeHtml(paymentMethodLabel(method))}</b>`,
+    instructions,
+    config[0].paymentIdentifier ? `Recipient: ${escapeHtml(config[0].paymentIdentifier)}` : "",
+    "",
+    t(language, "support"),
+  ].filter(Boolean).join("\n");
+  await ctx.reply(details, {
+    parse_mode: "HTML",
+    reply_markup: new InlineKeyboard().text(t(language, "backToWallet"), "nav:wallet"),
   });
 }
 
@@ -617,6 +686,18 @@ export function buildTelegramBot() {
       if (await ensureAccess(ctx, user)) await showHome(ctx, user);
       return;
     }
+    if (data === "nav:wallet") {
+      await showWallet(ctx, user);
+      return;
+    }
+    if (data === "wallet:topup") {
+      await showWalletTopup(ctx, user);
+      return;
+    }
+    if (data.startsWith("wallet:method:")) {
+      await showWalletPaymentMethod(ctx, user, data.slice("wallet:method:".length) as "binance" | "bybit" | "vodafone_cash" | "instapay");
+      return;
+    }
     if (data === "nav:shop") {
       await showShop(ctx, user);
       return;
@@ -630,7 +711,7 @@ export function buildTelegramBot() {
       return;
     }
     if (data === "shop:noop") return;
-    if (data === "nav:orders" || data === "nav:wallet" || data === "nav:checkout" || data === "nav:channel" || data === "nav:support") {
+    if (data === "nav:orders" || data === "nav:checkout" || data === "nav:channel" || data === "nav:support") {
       await ctx.reply(t(languageOf(user), "comingSoon"));
       return;
     }
@@ -686,6 +767,7 @@ export function buildTelegramBot() {
     if (await acceptPaymentReference(ctx, user, ctx.message.text)) return;
     const language = languageOf(user);
     if (ctx.message.text === t(language, "shop")) await showShop(ctx, user);
+    else if (ctx.message.text === t(language, "wallet")) await showWallet(ctx, user);
     else if (ctx.message.text === t(language, "settings")) await ctx.reply(t(language, "chooseLanguage"), { reply_markup: languageKeyboard() });
     else if (ctx.message.text === t(language, "home") || ctx.message.text === t(language, "mainMenu")) {
       await showHome(ctx, user);
