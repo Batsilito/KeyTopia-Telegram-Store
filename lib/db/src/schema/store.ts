@@ -70,6 +70,7 @@ export const roundingEnum = pgEnum("payment_rounding", [
   "nearest_5_egp",
 ]);
 export const walletTransactionTypeEnum = pgEnum("wallet_transaction_type", [
+  "top_up",
   "cashback",
   "referral_reward",
   "admin_adjustment",
@@ -315,6 +316,36 @@ export const walletTransactions = pgTable("wallet_transactions", {
   reference: text("reference"),
   createdAt: createdAt(),
 });
+
+export const walletTopUpStatusEnum = pgEnum("wallet_top_up_status", [
+  "pending",
+  "confirmed",
+  "cancelled",
+]);
+
+export const walletTopUps = pgTable(
+  "wallet_top_ups",
+  {
+    id: id(),
+    userId: uuid("user_id").notNull(),
+    amountUsd: numeric("amount_usd", { precision: 12, scale: 2 }).notNull(),
+    submittedTransactionId: text("submitted_transaction_id").notNull(),
+    status: walletTopUpStatusEnum("status").default("pending").notNull(),
+    confirmedBinanceTransactionId: text("confirmed_binance_transaction_id"),
+    requestedAt: timestamp("requested_at", { withTimezone: true }).defaultNow().notNull(),
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => ({
+    submittedTransactionIdx: uniqueIndex("wallet_top_ups_submitted_transaction_idx").on(
+      table.submittedTransactionId,
+    ),
+    confirmedBinanceTransactionIdx: uniqueIndex("wallet_top_ups_confirmed_transaction_idx").on(
+      table.confirmedBinanceTransactionId,
+    ),
+  }),
+);
 
 export const referrals = pgTable("referrals", {
   id: id(),

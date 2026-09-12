@@ -56,9 +56,18 @@ system.
 
 ## Payment policy
 
-The bot supports manual review for Binance, Bybit, Vodafone Cash, and InstaPay.
+The bot supports Binance UID wallet top-ups with automatic polling of the
+authenticated account's Binance Pay transaction history. Buyers enter the
+transaction ID and exact USDT amount; the API verifies the incoming C2C
+transaction against the receiving UID and credits the wallet once. Product checkout payments
+and Bybit, Vodafone Cash, and InstaPay payments remain manual review flows.
 Telegram Stars, XTR, Telegram invoices, and card checkout are intentionally not
 implemented.
+
+For Binance automatic wallet top-ups, add `BINANCE_API_KEY` and
+`BINANCE_API_SECRET` as Replit Secrets. The API key should be read-only, have
+Pay transaction-history access, and have no withdrawal permission. The enabled
+Binance payment method's `paymentIdentifier` must be the receiving Binance UID.
 
 ## Deployment checklist
 
@@ -71,6 +80,8 @@ implemented.
 - Set the required channel in Admin → Settings and verify the bot can inspect
   channel membership.
 - Configure payment instructions and enabled methods in Admin → Settings.
+- Configure the enabled Binance payment method's recipient identifier as the
+  receiving Binance UID before testing automatic wallet top-ups.
 - Configure the published webhook URL and verify a `/start` update.
 - Confirm manual payment review, inventory reservation, delivery, support, and
   audit records in a staging database before opening sales.

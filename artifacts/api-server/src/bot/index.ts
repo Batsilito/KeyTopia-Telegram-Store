@@ -16,10 +16,12 @@ import {
   supportMessages,
   supportTickets,
   referrals,
+  walletTopUps,
   walletTransactions,
   users,
 } from "@workspace/db";
 import { logger } from "../lib/logger";
+import { pollBinanceWalletTopUps } from "../lib/binance-topups";
 import { t, type BotLanguage } from "./locales";
 
 export const telegramBotToken = process.env.TELEGRAM_BOT_TOKEN;
@@ -218,11 +220,31 @@ export async function notifyDueFlashSales() {
 
 export function startStoreNotificationScheduler() {
   if (!telegramBot) return;
-  const run = () => {
-    void notifyDueFlashSales().catch((error) => logger.error({ err: error }, "Flash-sale notification job failed"));
+  const run = async () => {
+    await notifyDueFlashSales();
+    const confirmedTopUps = await pollBinanceWalletTopUps();
+    for (const topUp of confirmedTopUps) {
+      try {
+        await telegramBot.api.sendMessage(
+          topUp.telegramUserId,
+          t(topUp.language, "topUpConfirmed").replace("{amount}", Number(topUp.amountUsd).toFixed(2)),
+          { reply_markup: customerKeyboard(topUp.language) },
+        );
+      } catch (error) {
+        logger.warn(
+          { err: error, telegramUserId: topUp.telegramUserId, transactionId: topUp.transactionId },
+          "Unable to send Binance top-up confirmation",
+        );
+      }
+    }
   };
-  run();
-  const interval = setInterval(run, 30_000);
+  const runSafely = () => {
+    void run().catch((error) => {
+      logger.error({ err: error }, "Store notification or Binance top-up job failed");
+    });
+  };
+  runSafely();
+  const interval = setInterval(runSafely, 30_000);
   interval.unref();
 }
 
@@ -310,8 +332,8 @@ export async function issueReferralRewardForOrder(order: ReferralRewardOrder) {
 function paymentMethodDescription(method: string, language: BotLanguage) {
   const descriptions: Record<string, { en: string; ar: string }> = {
     binance: {
-      en: "Binance Pay accepts your Binance Order ID; sender Binance ID is optional.",
-      ar: "يدعم Binance Pay رقم طلب Binance، ورقم المرسل اختياري.",
+      en: "Send from your Binance UID to the recipient UID shown in the instructions. Your transfer is checked automatically.",
+      ar: "أرسل إلى رقم Binance UID الموضح في التعليمات. سيتم التحقق من التحويل تلقائياً.",
     },
     bybit: {
       en: "Bybit transfer instructions are shown after you choose Bybit.",
@@ -330,7 +352,7 @@ function paymentMethodDescription(method: string, language: BotLanguage) {
 }
 
 const supportDraftUsers = new Set<string>();
-const walletTopUpDrafts = new Map<string, "binance">();
+const walletTopUpDrafts = new Map<string, { method: "binance"; amount?: number }>();
 
 function createSupportTicketNumber() {
   return `KT-${Date.now().toString(36).toUpperCase()}-${randomBytes(3).toString("hex").toUpperCase()}`;
@@ -493,6 +515,7 @@ async function showWalletPaymentMethod(
     instructions,
     amount !== undefined ? `${t(language, "topUpAmount")}: ${amount.toFixed(2)} USDT` : "",
     config[0].paymentIdentifier ? `Recipient: ${escapeHtml(config[0].paymentIdentifier)}` : "",
+    method === "binance" && amount !== undefined ? t(language, "topUpPending") : "",
     "",
     t(language, "support"),
   ].filter(Boolean).join("\n");
@@ -503,7 +526,7 @@ async function showWalletPaymentMethod(
 }
 
 async function beginWalletTopUp(ctx: Context, user: typeof users.$inferSelect) {
-  walletTopUpDrafts.set(user.id, "binance");
+  walletTopUpDrafts.set(user.id, { method: "binance" });
   const language = languageOf(user);
   await ctx.reply(t(language, "enterTopUpAmount"), {
     reply_markup: new InlineKeyboard().text(t(language, "backToWallet"), "nav:wallet"),
@@ -523,8 +546,58 @@ async function acceptWalletTopUpAmount(ctx: Context, user: typeof users.$inferSe
     await ctx.reply(t(languageOf(user), "invalidTopUpAmount"));
     return true;
   }
+  walletTopUpDrafts.set(user.id, { method: "binance", amount });
+  await ctx.reply(t(languageOf(user), "enterBinanceTransactionId"), {
+    reply_markup: new InlineKeyboard().text(t(languageOf(user), "backToWallet"), "nav:wallet"),
+  });
+  return true;
+}
+
+async function acceptWalletTopUpTransactionId(
+  ctx: Context,
+  user: typeof users.$inferSelect,
+  value: string,
+) {
+  const draft = walletTopUpDrafts.get(user.id);
+  if (!draft?.amount) return false;
+  const submittedTransactionId = value.trim();
+  if (!/^[A-Za-z0-9_-]{6,128}$/.test(submittedTransactionId)) {
+    await ctx.reply(t(languageOf(user), "invalidBinanceTransactionId"));
+    return true;
+  }
+
+  const config = await db
+    .select({ id: paymentMethods.id })
+    .from(paymentMethods)
+    .where(and(eq(paymentMethods.method, "binance"), eq(paymentMethods.enabled, true)))
+    .limit(1);
+  if (!config[0]) {
+    walletTopUpDrafts.delete(user.id);
+    await ctx.reply(t(languageOf(user), "paymentUnavailable"));
+    return true;
+  }
+
+  const topUp = await db.transaction(async (tx) => {
+    await tx
+      .update(walletTopUps)
+      .set({ status: "cancelled", updatedAt: new Date() })
+      .where(and(eq(walletTopUps.userId, user.id), eq(walletTopUps.status, "pending")));
+    const created = await tx
+      .insert(walletTopUps)
+      .values({
+        userId: user.id,
+        amountUsd: draft.amount!.toFixed(2),
+        submittedTransactionId,
+      })
+      .returning({ id: walletTopUps.id });
+    return created[0];
+  });
   walletTopUpDrafts.delete(user.id);
-  await showWalletPaymentMethod(ctx, user, method, amount);
+  if (!topUp) {
+    await ctx.reply(t(languageOf(user), "error"));
+    return true;
+  }
+  await showWalletPaymentMethod(ctx, user, draft.method, draft.amount);
   return true;
 }
 
@@ -1122,6 +1195,7 @@ export function buildTelegramBot() {
     const user = await findOrCreateCustomer(ctx);
     if (!user) return;
     if (await acceptSupportMessage(ctx, user, ctx.message.text)) return;
+    if (await acceptWalletTopUpTransactionId(ctx, user, ctx.message.text)) return;
     if (await acceptPaymentReference(ctx, user, ctx.message.text)) return;
     if (await acceptWalletTopUpAmount(ctx, user, ctx.message.text)) return;
     const language = languageOf(user);
