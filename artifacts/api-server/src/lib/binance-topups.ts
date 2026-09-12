@@ -132,6 +132,34 @@ async function getPayHistory(startTime: number, endTime: number) {
   throw new Error(`Binance Pay history request failed: ${errors.join("; ")}`);
 }
 
+async function verifyThroughRailway(
+  candidate: { transactionId: string; amountUsd: string; requestedAt: Date },
+  receivingUid: string,
+) {
+  const verifierUrl = process.env.BINANCE_VERIFIER_URL?.trim();
+  const verifierToken = process.env.VERIFIER_SERVICE_TOKEN;
+  if (!verifierUrl || !verifierToken) return null;
+  const response = await fetch(`${verifierUrl.replace(/\/+$/, "")}/verify`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${verifierToken}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      transactionId: candidate.transactionId,
+      amountUsd: candidate.amountUsd,
+      requestedAt: candidate.requestedAt.toISOString(),
+      receivingUid,
+    }),
+    signal: AbortSignal.timeout(20_000),
+  });
+  const body = (await response.json()) as { ok?: boolean; verified?: boolean; error?: string };
+  if (!response.ok || body.ok !== true) {
+    throw new Error(`Remote Binance verifier failed: ${body.error ?? response.statusText}`);
+  }
+  return body.verified === true;
+}
+
 function matchesTransaction(
   transaction: BinancePayTransaction,
   candidate: { transactionId: string; amountUsd: string; requestedAt: Date },
@@ -387,6 +415,52 @@ export async function pollBinancePayments(): Promise<ConfirmedBinancePayment[]> 
       })),
   ];
   const earliestRequest = Math.min(...candidates.map((candidate) => candidate.requestedAt.getTime()));
+  const remoteVerifierConfigured = Boolean(
+    process.env.BINANCE_VERIFIER_URL?.trim() && process.env.VERIFIER_SERVICE_TOKEN,
+  );
+  if (remoteVerifierConfigured) {
+    const confirmed: ConfirmedBinancePayment[] = [];
+    for (const candidate of candidates) {
+      if (usedTransactionIds.has(candidate.transactionId)) continue;
+      const verified = await verifyThroughRailway(
+        {
+          transactionId: candidate.transactionId,
+          amountUsd: candidate.amountUsd,
+          requestedAt: candidate.requestedAt,
+        },
+        receivingUid,
+      );
+      if (!verified) continue;
+      if (candidate.kind === "wallet") {
+        const result = await confirmWalletTopUp(candidate.record, candidate.transactionId);
+        if (result) {
+          usedTransactionIds.add(candidate.transactionId);
+          confirmed.push({
+            kind: "wallet",
+            ...result,
+            amountUsd: candidate.amountUsd,
+            transactionId: candidate.transactionId,
+          });
+        }
+      } else {
+        const result = await confirmProductPayment(candidate.record, candidate.transactionId);
+        if (result) {
+          usedTransactionIds.add(candidate.transactionId);
+          confirmed.push({
+            kind: "order",
+            telegramUserId: result.telegramUserId,
+            language: result.language,
+            amountUsd: candidate.amountUsd,
+            transactionId: candidate.transactionId,
+            orderNumber: result.order.orderNumber,
+            orderId: result.order.id,
+            userId: candidate.record.userId,
+          });
+        }
+      }
+    }
+    return confirmed;
+  }
   const transactions = await getPayHistory(
     Math.max(0, earliestRequest - POLL_LOOKBACK_MS),
     Date.now() + 5_000,
