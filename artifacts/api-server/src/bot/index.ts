@@ -525,14 +525,17 @@ async function showWalletPaymentMethod(
         "",
         `<b>${t(language, "binancePaymentTitle")}</b>`,
         "",
-        `💵 <b>${t(language, "binanceAmountLabel")}:</b> <code>${amount.toFixed(2)} USDT</code>`,
-        `👤 <b>${t(language, "binanceRecipientLabel")}:</b>`,
+         `${t(language, "binanceAmountLabel")}: <b>${amount.toFixed(2)} USDT</b>`,
+         `<b>${t(language, "binanceRecipientLabel")}:</b>`,
         `<code>${escapeHtml(recipientUid)}</code>`,
         "",
-        t(language, "binanceCopyHint"),
-        t(language, "binanceTransferStep"),
+         `<b>${t(language, "binanceImportantLabel")}</b>`,
+         t(language, "binanceTransferStep").replace("{amount}", amount.toFixed(2)),
         t(language, "binanceTransactionStep"),
         "",
+         t(language, "binanceFindTransaction"),
+         t(language, "binanceRejectShortId"),
+         "",
         t(language, "topUpPending"),
         instructions ? `\n${escapeHtml(instructions)}` : "",
       ].filter(Boolean).join("\n")
@@ -1031,25 +1034,25 @@ async function showPayment(ctx: Context, user: typeof users.$inferSelect, checko
   }
   const instructions = language === "ar" ? config[0].instructionsAr : config[0].instructionsEn;
   const recipientUid = config[0].paymentIdentifier?.trim();
+  const exactAmount = Number(checkout[0].priceUsd).toFixed(2);
   const details = method === "binance" && recipientUid
     ? [
-        `<b>${t(language, "paymentInstructions")}</b>`,
-        "",
         `<b>${t(language, "binancePaymentTitle")}</b>`,
         "",
-        `💵 <b>${t(language, "binanceAmountLabel")}:</b> <code>${Number(checkout[0].priceUsd).toFixed(2)} USDT</code>`,
-        `👤 <b>${t(language, "binanceRecipientLabel")}:</b>`,
+        `${t(language, "binanceProductLabel")}: ⭕️ ${escapeHtml(checkout[0].productNameSnapshot)}`,
+        `${t(language, "binanceQuantityLabel")}: ${checkout[0].quantity}`,
+        `${t(language, "binanceAmountLabel")}: <b>${exactAmount} USDT</b>`,
+        "",
+        `<b>${t(language, "binanceRecipientLabel")}:</b>`,
         `<code>${escapeHtml(recipientUid)}</code>`,
         "",
-        t(language, "binanceCopyHint"),
-        t(language, "binanceTransferStep"),
+        `<b>${t(language, "binanceImportantLabel")}</b>`,
+        t(language, "binanceTransferStep").replace("{amount}", exactAmount),
         t(language, "binanceTransactionStep"),
         "",
-        `🧾 <b>${t(language, "shopOrder")}:</b> <code>${escapeHtml(checkout[0].reference)}</code>`,
-        `➕ <b>${t(language, "quantity")}:</b> ${checkout[0].quantity}`,
-        `⏱ <b>${t(language, "paymentWindow")}:</b> 5 minutes`,
-        instructions ? `\n${escapeHtml(instructions)}` : "",
-      ].filter(Boolean).join("\n")
+        t(language, "binanceFindTransaction"),
+        t(language, "binanceRejectShortId"),
+      ].join("\n")
     : [
         t(language, "paymentInstructions"),
         escapeHtml(instructions),
@@ -1064,7 +1067,10 @@ async function showPayment(ctx: Context, user: typeof users.$inferSelect, checko
       caption: paymentMethodLabel(method),
     });
   }
-  await ctx.reply(details, { reply_markup: new InlineKeyboard().text(t(language, "iHavePaid"), `paid:${checkoutId}`).row().text(t(language, "cancel"), "nav:home") });
+  await ctx.reply(details, {
+    parse_mode: "HTML",
+    reply_markup: new InlineKeyboard().text(t(language, "iHavePaid"), `paid:${checkoutId}`).row().text(t(language, "cancel"), "nav:home"),
+  });
 }
 
 async function acceptPaymentReference(ctx: Context, user: typeof users.$inferSelect, reference: string) {

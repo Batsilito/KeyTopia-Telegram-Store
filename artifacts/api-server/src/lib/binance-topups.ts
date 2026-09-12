@@ -189,7 +189,7 @@ async function confirmProductPayment(
     userId: string;
     checkoutSessionId: string;
     amountUsd: string;
-    submittedTransactionId: string;
+    submittedTransactionId: string | null;
   },
   transactionId: string,
 ) {
