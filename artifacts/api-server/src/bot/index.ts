@@ -603,6 +603,52 @@ async function showWallet(ctx: Context, user: typeof users.$inferSelect) {
   );
 }
 
+async function showOrders(ctx: Context, user: typeof users.$inferSelect) {
+  if (!(await ensureAccess(ctx, user))) return;
+  const language = languageOf(user);
+  const customerOrders = await db
+    .select()
+    .from(orders)
+    .where(eq(orders.userId, user.id))
+    .orderBy(desc(orders.createdAt))
+    .limit(20);
+  const body = customerOrders.length
+    ? customerOrders
+        .map(
+          (order) =>
+            `🧾 <code>${escapeHtml(order.orderNumber)}</code>\n` +
+            `📦 ${escapeHtml(order.productNameSnapshot)} · ${t(language, "quantity")}: ${order.quantity}\n` +
+            `💰 ${Number(order.priceUsd).toFixed(2)} USDT · ${escapeHtml(order.status)}`,
+        )
+        .join("\n\n")
+    : t(language, "noOrders");
+  await ctx.reply(`<b>${t(language, "ordersTitle")}</b>\n\n${body}`, {
+    parse_mode: "HTML",
+    reply_markup: customerKeyboard(language),
+  });
+}
+
+async function showProfile(ctx: Context, user: typeof users.$inferSelect) {
+  if (!(await ensureAccess(ctx, user))) return;
+  const language = languageOf(user);
+  const displayName = [user.firstName, user.lastName].filter(Boolean).join(" ");
+  const username = user.username ? `@${user.username}` : "—";
+  await ctx.reply(
+    [
+      `<b>${t(language, "profile")}</b>`,
+      "",
+      `👤 <b>${t(language, "profileName")}:</b> ${escapeHtml(displayName)}`,
+      `🔗 <b>${t(language, "profileUsername")}:</b> ${escapeHtml(username)}`,
+      `🌐 <b>${t(language, "profileLanguage")}:</b> ${language.toUpperCase()}`,
+      `🎁 <b>${t(language, "profileReferral")}:</b> <code>${escapeHtml(user.referralCode)}</code>`,
+    ].join("\n"),
+    {
+      parse_mode: "HTML",
+      reply_markup: customerKeyboard(language),
+    },
+  );
+}
+
 async function showWalletTopup(ctx: Context, user: typeof users.$inferSelect) {
   if (!(await ensureAccess(ctx, user))) return;
   const language = languageOf(user);
@@ -1334,6 +1380,22 @@ export function buildTelegramBot() {
     const user = await findOrCreateCustomer(ctx);
     if (user && (await ensureAccess(ctx, user))) await showHome(ctx, user);
   });
+  bot.command("wallet", async (ctx) => {
+    const user = await findOrCreateCustomer(ctx);
+    if (user) await showWallet(ctx, user);
+  });
+  bot.command("orders", async (ctx) => {
+    const user = await findOrCreateCustomer(ctx);
+    if (user) await showOrders(ctx, user);
+  });
+  bot.command("profile", async (ctx) => {
+    const user = await findOrCreateCustomer(ctx);
+    if (user) await showProfile(ctx, user);
+  });
+  bot.command("support", async (ctx) => {
+    const user = await findOrCreateCustomer(ctx);
+    if (user) await showSupport(ctx, user);
+  });
   bot.on("callback_query:data", async (ctx) => {
     const user = await findOrCreateCustomer(ctx);
     if (!user) return;
@@ -1361,6 +1423,10 @@ export function buildTelegramBot() {
     }
     if (data === "nav:wallet") {
       await showWallet(ctx, user);
+      return;
+    }
+    if (data === "nav:orders") {
+      await showOrders(ctx, user);
       return;
     }
     if (data === "nav:support") {
@@ -1421,7 +1487,7 @@ export function buildTelegramBot() {
       return;
     }
     if (data === "shop:noop") return;
-    if (data === "nav:orders" || data === "nav:checkout" || data === "nav:channel") {
+    if (data === "nav:checkout" || data === "nav:channel") {
       await ctx.reply(t(languageOf(user), "comingSoon"));
       return;
     }
@@ -1497,6 +1563,7 @@ export function buildTelegramBot() {
     const language = languageOf(user);
     if (ctx.message.text === t(language, "shop")) await showShop(ctx, user);
     else if (ctx.message.text === t(language, "wallet")) await showWallet(ctx, user);
+    else if (ctx.message.text === t(language, "orders")) await showOrders(ctx, user);
     else if (ctx.message.text === t(language, "support")) await showSupport(ctx, user);
     else if (ctx.message.text === t(language, "refer")) await showReferral(ctx, user);
     else if (ctx.message.text === t(language, "settings")) await ctx.reply(t(language, "chooseLanguage"), { reply_markup: languageKeyboard() });
