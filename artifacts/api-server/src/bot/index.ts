@@ -524,25 +524,23 @@ async function showWalletPaymentMethod(
   }
   const instructions = language === "ar" ? config[0].instructionsAr : config[0].instructionsEn;
   const recipientUid = config[0].paymentIdentifier?.trim();
+  const topUpAmount = amount !== undefined && Number.isInteger(amount)
+    ? String(amount)
+    : amount?.toFixed(2);
   const details = method === "binance" && amount !== undefined && recipientUid
     ? [
-        `<b>${t(language, "topUpInstructions")}</b>`,
-        "",
         `<b>${t(language, "binancePaymentTitle")}</b>`,
         "",
-         `${t(language, "binanceAmountLabel")}: <b>${amount.toFixed(2)} USDT</b>`,
-         `<b>${t(language, "binanceRecipientLabel")}:</b>`,
-        `<code>${escapeHtml(recipientUid)}</code>`,
+        `${t(language, "binanceTopUpAmountLabel")}: <b>${topUpAmount}$</b>`,
         "",
-         `<b>${t(language, "binanceImportantLabel")}</b>`,
-         t(language, "binanceTransferStep").replace("{amount}", amount.toFixed(2)),
+        `<b>${t(language, "binanceRecipientLabel")}:</b> <code>${escapeHtml(recipientUid)}</code>`,
+        "",
+        `<b>${t(language, "binanceImportantLabel")}</b>`,
+        t(language, "binanceTransferStep").replace("{amount}", topUpAmount ?? amount.toFixed(2)),
         t(language, "binanceTransactionStep"),
         "",
-         t(language, "binanceFindTransaction"),
-         t(language, "binanceRejectShortId"),
-         "",
-        t(language, "topUpPending"),
-        instructions ? `\n${escapeHtml(instructions)}` : "",
+        t(language, "binanceFindTransaction"),
+        t(language, "binanceRejectShortId"),
       ].filter(Boolean).join("\n")
     : [
         `<b>${t(language, "topUpInstructions")}</b>`,
@@ -582,9 +580,7 @@ async function acceptWalletTopUpAmount(ctx: Context, user: typeof users.$inferSe
     return true;
   }
   walletTopUpDrafts.set(user.id, { method: "binance", amount });
-  await ctx.reply(t(languageOf(user), "enterBinanceTransactionId"), {
-    reply_markup: new InlineKeyboard().text(t(languageOf(user), "backToWallet"), "nav:wallet"),
-  });
+  await showWalletPaymentMethod(ctx, user, "binance", amount);
   return true;
 }
 
@@ -632,7 +628,9 @@ async function acceptWalletTopUpTransactionId(
     await ctx.reply(t(languageOf(user), "error"));
     return true;
   }
-  await showWalletPaymentMethod(ctx, user, draft.method, draft.amount);
+  await ctx.reply(t(languageOf(user), "topUpPending"), {
+    reply_markup: customerKeyboard(languageOf(user)),
+  });
   return true;
 }
 
