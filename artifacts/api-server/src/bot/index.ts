@@ -1,10 +1,11 @@
 import { Bot, InlineKeyboard, InputFile, Keyboard, webhookCallback, type Context } from "grammy";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { and, count, desc, eq, gt } from "drizzle-orm";
+import { and, count, desc, eq, gt, lte } from "drizzle-orm";
 import {
   checkoutSessions,
   db,
+  flashSales,
   inventoryItems,
   paymentMethods,
   payments,
@@ -68,6 +69,122 @@ function paymentLogoPath(method: string) {
 
 function escapeHtml(value: string) {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+}
+
+type BroadcastRecipient = {
+  telegramUserId: string;
+  language: BotLanguage;
+};
+
+async function broadcastToCustomers(
+  message: (language: BotLanguage) => string,
+  keyboard: (language: BotLanguage) => InlineKeyboard,
+) {
+  if (!telegramBot) return;
+  const recipients = await db
+    .select({ telegramUserId: users.telegramUserId, language: users.language })
+    .from(users);
+  let sent = 0;
+  let failed = 0;
+  for (const recipient of recipients as BroadcastRecipient[]) {
+    try {
+      await telegramBot.api.sendMessage(recipient.telegramUserId, message(recipient.language), {
+        parse_mode: "HTML",
+        reply_markup: keyboard(recipient.language),
+      });
+      sent += 1;
+    } catch (error) {
+      failed += 1;
+      logger.warn({ err: error }, "Unable to send store notification");
+    }
+  }
+  logger.info({ sent, failed }, "Store notification broadcast completed");
+}
+
+export function broadcastProductRestocked(
+  product: typeof products.$inferSelect,
+  restockedCount: number,
+  availableStock: number,
+) {
+  return broadcastToCustomers(
+    (language) => {
+      const name = language === "ar" ? product.nameAr : product.nameEn;
+      return [
+        `<b>${language === "ar" ? "🔔 تمت إعادة توفير المنتج" : "🔔 PRODUCT RESTOCKED"}</b>`,
+        "",
+        `📦 <b>${language === "ar" ? "المنتج" : "Product"}:</b> ${escapeHtml(name)}`,
+        `➕ <b>${language === "ar" ? "تمت إضافة" : "Restocked"}:</b> ${restockedCount}`,
+        `📊 <b>${language === "ar" ? "المتاح الآن" : "Available now"}:</b> ${availableStock}`,
+        `💰 <b>${language === "ar" ? "السعر" : "Price"}:</b> ${product.priceUsd} USDT`,
+      ].join("\n");
+    },
+    (language) => new InlineKeyboard().text(language === "ar" ? "عرض المنتج" : "View product", `product:${product.id}`),
+  );
+}
+
+export function broadcastNewProduct(product: typeof products.$inferSelect, availableStock = 0) {
+  return broadcastToCustomers(
+    (language) => {
+      const name = language === "ar" ? product.nameAr : product.nameEn;
+      const stock = product.stockType === "unlimited"
+        ? language === "ar" ? "غير محدود" : "Unlimited"
+        : String(availableStock);
+      return [
+        `<b>${language === "ar" ? "🆕 منتج جديد" : "🆕 NEW PRODUCT"}</b>`,
+        "",
+        `📦 <b>${language === "ar" ? "المنتج" : "Product"}:</b> ${escapeHtml(name)}`,
+        `📊 <b>${language === "ar" ? "المتاح" : "Available"}:</b> ${stock}`,
+        `💰 <b>${language === "ar" ? "السعر" : "Price"}:</b> ${product.priceUsd} USDT`,
+      ].join("\n");
+    },
+    (language) => new InlineKeyboard().text(language === "ar" ? "عرض المنتج" : "View product", `product:${product.id}`),
+  );
+}
+
+export function broadcastFlashSale(
+  sale: typeof flashSales.$inferSelect,
+  product: typeof products.$inferSelect,
+) {
+  return broadcastToCustomers(
+    (language) => {
+      const name = language === "ar" ? product.nameAr : product.nameEn;
+      return [
+        `<b>${language === "ar" ? "🔥 عرض خاطف" : "🔥 FLASH SALE"}</b>`,
+        "",
+        `📦 <b>${language === "ar" ? "المنتج" : "Product"}:</b> ${escapeHtml(name)}`,
+        `🏷️ <b>${language === "ar" ? "السعر القديم" : "Old price"}:</b> ${sale.originalPriceUsd} USDT`,
+        `💰 <b>${language === "ar" ? "السعر الجديد" : "New price"}:</b> ${sale.salePriceUsd} USDT`,
+      ].join("\n");
+    },
+    (language) => new InlineKeyboard().text(language === "ar" ? "افتح المتجر" : "Open shop", "nav:shop"),
+  );
+}
+
+export async function notifyDueFlashSales() {
+  if (!telegramBot) return;
+  const dueSales = await db
+    .select({ sale: flashSales, product: products })
+    .from(flashSales)
+    .innerJoin(products, eq(flashSales.productId, products.id))
+    .where(and(eq(flashSales.status, "scheduled"), lte(flashSales.startsAt, new Date())));
+  for (const due of dueSales) {
+    const activated = await db
+      .update(flashSales)
+      .set({ status: "active", updatedAt: new Date() })
+      .where(and(eq(flashSales.id, due.sale.id), eq(flashSales.status, "scheduled")))
+      .returning();
+    if (activated[0]) await broadcastFlashSale(activated[0], due.product);
+  }
+}
+
+export function startStoreNotificationScheduler() {
+  if (!telegramBot) return;
+  const run = () => {
+    void notifyDueFlashSales().catch((error) => logger.error({ err: error }, "Flash-sale notification job failed"));
+  };
+  run();
+  const interval = setInterval(run, 30_000);
+  interval.unref();
 }
 
 function paymentMethodDescription(method: string, language: BotLanguage) {

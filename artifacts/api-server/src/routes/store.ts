@@ -57,6 +57,7 @@ import {
   getAdminFromRequest,
   setSessionCookie,
 } from "../lib/admin-auth";
+import { broadcastNewProduct, broadcastProductRestocked } from "../bot";
 
 const router: IRouter = Router();
 
@@ -270,6 +271,7 @@ router.post("/products", async (req, res) => {
     entityId: row[0].id,
     afterValues: parsed.data,
   });
+  if (row[0].active) void broadcastNewProduct(row[0]);
   res.status(201).json(productView(row[0]));
 });
 
@@ -420,6 +422,10 @@ router.post("/inventory", async (req, res) => {
     .select({ total: count() })
     .from(inventoryItems)
     .where(and(eq(inventoryItems.productId, parsed.data.productId), eq(inventoryItems.status, "available")));
+  const product = await db.select().from(products).where(eq(products.id, parsed.data.productId)).limit(1);
+  if (fresh.length > 0 && product[0]?.active) {
+    void broadcastProductRestocked(product[0], fresh.length, Number(available[0]?.total ?? 0));
+  }
   res.status(201).json({
     imported: fresh.length,
     skippedDuplicates: submittedValues.length - fresh.length,

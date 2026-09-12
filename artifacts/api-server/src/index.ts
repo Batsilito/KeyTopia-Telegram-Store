@@ -1,6 +1,6 @@
 import app from "./app";
 import { logger } from "./lib/logger";
-import { buildTelegramBot } from "./bot";
+import { buildTelegramBot, startStoreNotificationScheduler } from "./bot";
 
 const rawPort = process.env["PORT"];
 
@@ -24,6 +24,7 @@ app.listen(port, (err) => {
 
   logger.info({ port }, "Server listening");
   const bot = buildTelegramBot();
+  startStoreNotificationScheduler();
   if (bot && process.env.NODE_ENV !== "production") {
     void (async () => {
       try {
