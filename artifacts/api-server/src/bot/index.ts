@@ -66,6 +66,32 @@ function paymentLogoPath(method: string) {
   return existsSync(path) ? path : null;
 }
 
+function escapeHtml(value: string) {
+  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+}
+
+function paymentMethodDescription(method: string, language: BotLanguage) {
+  const descriptions: Record<string, { en: string; ar: string }> = {
+    binance: {
+      en: "Binance Pay accepts your Binance Order ID; sender Binance ID is optional.",
+      ar: "يدعم Binance Pay رقم طلب Binance، ورقم المرسل اختياري.",
+    },
+    bybit: {
+      en: "Bybit transfer instructions are shown after you choose Bybit.",
+      ar: "تظهر تعليمات تحويل Bybit بعد اختيار Bybit.",
+    },
+    vodafone_cash: {
+      en: "Vodafone Cash transfer instructions are shown after you choose Vodafone Cash.",
+      ar: "تظهر تعليمات تحويل Vodafone Cash بعد اختيار Vodafone Cash.",
+    },
+    instapay: {
+      en: "InstaPay transfer instructions are shown after you choose InstaPay.",
+      ar: "تظهر تعليمات تحويل InstaPay بعد اختيار InstaPay.",
+    },
+  };
+  return descriptions[method]?.[language] ?? "";
+}
+
 async function findOrCreateCustomer(ctx: Context) {
   const from = ctx.from;
   if (!from) return null;
@@ -281,19 +307,61 @@ async function showProduct(ctx: Context, user: typeof users.$inferSelect, produc
   await ctx.reply(details, { reply_markup: keyboard });
 }
 
-async function beginCheckout(ctx: Context, user: typeof users.$inferSelect, productId: string) {
+async function showQuantitySelector(ctx: Context, user: typeof users.$inferSelect, productId: string, requestedQuantity = 1) {
   if (!(await ensureAccess(ctx, user))) return;
   const rows = await db.select().from(products).where(and(eq(products.id, productId), eq(products.active, true))).limit(1);
   const product = rows[0];
   if (!product) return;
-  const available = product.stockType === "unlimited"
-    ? true
-    : (await db.select({ id: inventoryItems.id }).from(inventoryItems).where(and(eq(inventoryItems.productId, product.id), eq(inventoryItems.status, "available"))).limit(1)).length > 0;
-  if (!available) {
+  const availability = await getProductAvailability(product);
+  const maxQuantity = product.stockType === "unlimited" ? 99 : Number(availability.quantity);
+  if (!availability.inStock || maxQuantity < 1) {
     await ctx.reply(t(languageOf(user), "outOfStock"));
     return;
   }
-  const reference = `KT-${Date.now().toString(36).toUpperCase()}`;
+  const quantity = Math.min(Math.max(Math.trunc(requestedQuantity), 1), maxQuantity);
+  const total = (Number(product.priceUsd) * quantity).toFixed(2);
+  const language = languageOf(user);
+  const name = language === "ar" ? product.nameAr : product.nameEn;
+  const keyboard = new InlineKeyboard()
+    .text("−", `quantity:${product.id}:minus:${quantity}`)
+    .text(String(quantity), "quantity:noop")
+    .text("+", `quantity:${product.id}:plus:${quantity}`)
+    .row()
+    .text("1", `quantity:${product.id}:set:1`)
+    .text(`${t(language, "max")} ${maxQuantity}`, `quantity:${product.id}:set:${maxQuantity}`)
+    .row()
+    .text(`${t(language, "confirm")} ${quantity} · ${total} USDT`, `quantity:${product.id}:confirm:${quantity}`)
+    .row()
+    .text(t(language, "back"), `quantity:${product.id}:back`);
+  const text = [
+    `<b>${t(language, "selectQuantity")}</b>`,
+    "",
+    `<b>${escapeHtml(name)}</b>`,
+    "",
+    `<b>${t(language, "unitPrice")}: ${product.priceUsd} USDT</b>`,
+    `<b>${t(language, "quantity")}: ${quantity}</b>`,
+    `<b>${t(language, "total")}: ${total} USDT</b>`,
+    `<b>${t(language, "availableStock")}: ${escapeHtml(availability.quantity)}</b>`,
+    "",
+    `<i>${t(language, "quantityCheckNotice")}</i>`,
+  ].join("\n");
+  await ctx.reply(text, { parse_mode: "HTML", reply_markup: keyboard });
+}
+
+async function beginCheckout(ctx: Context, user: typeof users.$inferSelect, productId: string, requestedQuantity = 1) {
+  if (!(await ensureAccess(ctx, user))) return;
+  const rows = await db.select().from(products).where(and(eq(products.id, productId), eq(products.active, true))).limit(1);
+  const product = rows[0];
+  if (!product) return;
+  const availability = await getProductAvailability(product);
+  const maxQuantity = product.stockType === "unlimited" ? 99 : Number(availability.quantity);
+  const quantity = Math.min(Math.max(Math.trunc(requestedQuantity), 1), maxQuantity);
+  if (!availability.inStock || maxQuantity < 1 || quantity !== requestedQuantity) {
+    await ctx.reply(t(languageOf(user), "outOfStock"));
+    return;
+  }
+  const total = (Number(product.priceUsd) * quantity).toFixed(2);
+  const reference = `KT${Date.now().toString(36).toUpperCase()}${user.id.replaceAll("-", "").slice(0, 6).toUpperCase()}`;
   const checkout = await db.insert(checkoutSessions).values({
     reference,
     userId: user.id,
@@ -301,7 +369,8 @@ async function beginCheckout(ctx: Context, user: typeof users.$inferSelect, prod
     productNameSnapshot: product.nameEn,
     durationSnapshot: product.duration,
     warrantySnapshot: product.warranty,
-    priceUsd: product.priceUsd,
+    quantity,
+    priceUsd: total,
     expiresAt: new Date(Date.now() + 5 * 60 * 1000),
   }).returning();
   const methods = await db.select().from(paymentMethods).where(eq(paymentMethods.enabled, true));
@@ -310,8 +379,29 @@ async function beginCheckout(ctx: Context, user: typeof users.$inferSelect, prod
   for (const method of methods) {
     keyboard.text(paymentMethodLabel(method.method), `method:${checkout[0].id}:${method.method}`).row();
   }
-  keyboard.text(t(language, "cancel"), "nav:home");
-  await ctx.reply(`${t(language, "choosePayment")}\n\nReference: ${reference}\n${t(language, "price")}: $${product.priceUsd}`, { reply_markup: keyboard });
+  keyboard
+    .text(t(language, "cancelOrder"), "nav:home")
+    .text(t(language, "support"), "nav:support");
+  const productName = language === "ar" ? product.nameAr : product.nameEn;
+  const methodLines = methods.length
+    ? methods.map((method) => `• <b>${escapeHtml(paymentMethodLabel(method.method))}</b> ${escapeHtml(paymentMethodDescription(method.method, language))}`)
+    : [`• ${t(language, "paymentUnavailable")}`];
+  const summary = [
+    `<b>${t(language, "orderCreated")}</b>`,
+    "",
+    `🧩 <b>${t(language, "product")}:</b> ${escapeHtml(productName)}`,
+    `➕ <b>${t(language, "quantity")}:</b> ${quantity}`,
+    `💲 <b>${t(language, "unitPrice")}:</b> ${product.priceUsd} USDT`,
+    `💰 <b>${t(language, "total")}:</b> ${total} USDT`,
+    `🏪 <b>${t(language, "seller")}:</b> KeyTopia`,
+    `📁 <b>${t(language, "shopOrder")}:</b> ${reference}`,
+    "",
+    `<b>${t(language, "paymentMethodsHeader")}</b>`,
+    ...methodLines,
+    "",
+    `⏱ <b>${t(language, "paymentWindow")}:</b> 5 minutes`,
+  ].join("\n");
+  await ctx.reply(summary, { parse_mode: "HTML", reply_markup: keyboard });
 }
 
 async function showPayment(ctx: Context, user: typeof users.$inferSelect, checkoutId: string, method: "binance" | "bybit" | "vodafone_cash" | "instapay") {
@@ -324,10 +414,12 @@ async function showPayment(ctx: Context, user: typeof users.$inferSelect, checko
     await ctx.reply(t(language, "paymentUnavailable"));
     return;
   }
+  const instructions = language === "ar" ? config[0].instructionsAr : config[0].instructionsEn;
   const details = [
     t(language, "paymentInstructions"),
-    config[0].instructionsEn,
+    instructions,
     `Reference: ${checkout[0].reference}`,
+    `${t(language, "quantity")}: ${checkout[0].quantity}`,
     `${t(language, "price")}: $${checkout[0].priceUsd}`,
     config[0].paymentIdentifier ? `Recipient: ${config[0].paymentIdentifier}` : "",
   ].filter(Boolean).join("\n");
@@ -425,6 +517,31 @@ export function buildTelegramBot() {
       await ctx.reply(t(languageOf(user), "comingSoon"));
       return;
     }
+    if (data === "quantity:noop") return;
+    if (data.startsWith("quantity:")) {
+      const [, productId, action, rawQuantity] = data.split(":");
+      const currentQuantity = Number(rawQuantity || 1);
+      if (action === "back") {
+        await showProduct(ctx, user, productId);
+        return;
+      }
+      if (action === "confirm") {
+        await beginCheckout(ctx, user, productId, currentQuantity);
+        return;
+      }
+      if (action === "set") {
+        await showQuantitySelector(ctx, user, productId, currentQuantity);
+        return;
+      }
+      if (action === "max") {
+        await showQuantitySelector(ctx, user, productId, 99);
+        return;
+      }
+      if (action === "minus" || action === "plus") {
+        await showQuantitySelector(ctx, user, productId, currentQuantity + (action === "plus" ? 1 : -1));
+        return;
+      }
+    }
     if (data.startsWith("product:")) {
       if (data.startsWith("product:refresh:")) {
         await showProduct(ctx, user, data.slice("product:refresh:".length));
@@ -434,7 +551,7 @@ export function buildTelegramBot() {
       return;
     }
     if (data.startsWith("buy:")) {
-      await beginCheckout(ctx, user, data.slice("buy:".length));
+      await showQuantitySelector(ctx, user, data.slice("buy:".length));
       return;
     }
     if (data.startsWith("method:")) {
