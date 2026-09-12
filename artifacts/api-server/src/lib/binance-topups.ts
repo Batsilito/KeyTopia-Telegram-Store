@@ -106,7 +106,7 @@ async function getPayHistory(startTime: number, endTime: number) {
   const body = (await response.json()) as BinancePayHistoryResponse;
   if (!response.ok || body.code !== "000000") {
     throw new Error(
-      `Binance Pay history request failed: ${body.message ?? response.statusText}`,
+      `Binance Pay history request failed (${response.status}): ${body.code ?? "unknown"} ${body.message ?? response.statusText}`,
     );
   }
   return body.data ?? [];

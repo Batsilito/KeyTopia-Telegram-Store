@@ -596,7 +596,7 @@ async function acceptWalletTopUpTransactionId(
   const draft = walletTopUpDrafts.get(user.id);
   if (!draft?.amount) return false;
   const submittedTransactionId = value.trim();
-  if (!/^[A-Za-z0-9_-]{6,128}$/.test(submittedTransactionId)) {
+  if (!/^\S{6,128}$/.test(submittedTransactionId)) {
     await ctx.reply(t(languageOf(user), "invalidBinanceTransactionId"));
     return true;
   }
@@ -1138,11 +1138,12 @@ async function showPayment(ctx: Context, user: typeof users.$inferSelect, checko
 async function acceptPaymentReference(ctx: Context, user: typeof users.$inferSelect, reference: string) {
   const checkout = await db.select().from(checkoutSessions).where(and(eq(checkoutSessions.userId, user.id), eq(checkoutSessions.status, "pending"), gt(checkoutSessions.expiresAt, new Date()))).orderBy(desc(checkoutSessions.createdAt)).limit(1);
   if (!checkout[0] || !checkout[0].paymentMethod) return false;
-  if (checkout[0].paymentMethod === "binance" && !/^[A-Za-z0-9_-]{6,128}$/.test(reference.trim())) {
+  const submittedReference = reference.trim();
+  if (checkout[0].paymentMethod === "binance" && !/^\S{6,128}$/.test(submittedReference)) {
     await ctx.reply(t(languageOf(user), "invalidBinanceTransactionId"));
     return true;
   }
-  const existing = await db.select({ id: payments.id }).from(payments).where(eq(payments.transactionReference, reference)).limit(1);
+  const existing = await db.select({ id: payments.id }).from(payments).where(eq(payments.transactionReference, submittedReference)).limit(1);
   if (existing.length > 0) {
     await ctx.reply(t(languageOf(user), "error"));
     return true;
@@ -1154,7 +1155,7 @@ async function acceptPaymentReference(ctx: Context, user: typeof users.$inferSel
       userId: user.id,
       paymentMethod: checkout[0].paymentMethod!,
       usdAmount: checkout[0].priceUsd,
-      transactionReference: reference,
+      transactionReference: submittedReference,
       status: "submitted",
       submittedAt: new Date(),
     });
