@@ -39,9 +39,13 @@ function validServiceToken(request) {
 function matchesTransaction(transaction, candidate) {
   const expectedCents = amountInCents(candidate.amountUsd);
   const transactionCents = amountInCents(transaction.amount ?? "");
+  const receiverMatches = [
+    transaction.receiverInfo?.binanceId,
+    transaction.receiverInfo?.accountId,
+  ].some((identifier) => String(identifier ?? "").trim() === candidate.receivingUid);
   return Boolean(
     transaction.transactionId === candidate.transactionId &&
-      transaction.orderType === "C2C" &&
+      ["C2C", "PAY"].includes(transaction.orderType) &&
       transaction.success !== false &&
       transaction.transactionTime &&
       transaction.transactionTime >= candidate.requestedAt.getTime() - 60_000 &&
@@ -50,7 +54,7 @@ function matchesTransaction(transaction, candidate) {
       expectedCents !== null &&
       transactionCents === expectedCents &&
       transactionCents > 0 &&
-      String(transaction.receiverInfo?.binanceId ?? "") === candidate.receivingUid,
+      receiverMatches,
   );
 }
 

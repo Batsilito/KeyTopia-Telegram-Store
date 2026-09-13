@@ -1022,12 +1022,44 @@ async function acceptWalletTopUpTransactionId(
   }
 
   const existing = await db
-    .select({ id: walletTopUps.id })
+    .select({
+      id: walletTopUps.id,
+      userId: walletTopUps.userId,
+      amountUsd: walletTopUps.amountUsd,
+      status: walletTopUps.status,
+    })
     .from(walletTopUps)
     .where(eq(walletTopUps.submittedTransactionId, submittedTransactionId))
     .limit(1);
   if (existing[0]) {
     walletTopUpDrafts.delete(user.id);
+    if (
+      existing[0].userId === user.id &&
+      existing[0].status === "verification_failed" &&
+      Number(existing[0].amountUsd).toFixed(2) === draft.amount.toFixed(2)
+    ) {
+      const retried = await db
+        .update(walletTopUps)
+        .set({
+          status: "pending",
+          verificationFailureReason: null,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(walletTopUps.id, existing[0].id),
+            eq(walletTopUps.status, "verification_failed"),
+          ),
+        )
+        .returning({ id: walletTopUps.id });
+      if (retried[0]) {
+        await ctx.reply(t(languageOf(user), "topUpPending"), {
+          reply_markup: customerKeyboard(languageOf(user)),
+        });
+        scheduleBinancePaymentProcessing();
+        return true;
+      }
+    }
     await ctx.reply(t(languageOf(user), "transactionAlreadySubmitted"), {
       reply_markup: customerKeyboard(languageOf(user)),
     });

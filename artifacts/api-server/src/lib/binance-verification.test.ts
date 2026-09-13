@@ -49,6 +49,25 @@ test("confirms an exact Binance match for a wallet top-up", () => {
   assert.equal(result.status === "confirmed" && result.transactionId, "tx-wallet-001");
 });
 
+test("confirms an exact Binance Pay ID match from the receiver accountId", () => {
+  const result = evaluateBinancePayment(
+    candidate(),
+    [
+      transaction({
+        orderType: "PAY",
+        receiverInfo: { accountId: receivingUid },
+      }),
+    ],
+    receivingUid,
+    now,
+  );
+
+  assert.deepEqual(result, {
+    status: "confirmed",
+    transactionId: "tx-wallet-001",
+  });
+});
+
 test("confirms an exact Binance match for a product payment", () => {
   const result = evaluateBinancePayment(
     candidate({ transactionId: "tx-product-001", amountUsd: "49.99" }),
@@ -88,6 +107,10 @@ test("fails a wrong amount without authorizing a payment", () => {
   );
 
   assert.equal(result.status, "failed");
+  assert.match(
+    result.status === "failed" ? result.reason : "",
+    /amount does not match/,
+  );
   assert.notEqual(result.status, "confirmed");
 });
 
@@ -100,6 +123,10 @@ test("fails a wrong recipient without authorizing a payment", () => {
   );
 
   assert.equal(result.status, "failed");
+  assert.match(
+    result.status === "failed" ? result.reason : "",
+    /recipient does not match/,
+  );
   assert.notEqual(result.status, "confirmed");
 });
 

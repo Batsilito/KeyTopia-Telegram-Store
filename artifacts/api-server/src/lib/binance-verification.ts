@@ -7,6 +7,7 @@ export type BinancePayTransaction = {
   success?: boolean;
   receiverInfo?: {
     binanceId?: string;
+    accountId?: string;
     type?: string;
   };
 };
@@ -47,6 +48,7 @@ export type BinanceFailureNotificationPlan = {
 };
 
 export const BINANCE_VERIFICATION_GRACE_MS = 5 * 60 * 1000;
+const SUPPORTED_INCOMING_ORDER_TYPES = new Set(["C2C", "PAY"]);
 
 export function createBinanceFailureNotificationPlan(
   payment: BinanceFailureNotificationInput,
@@ -72,13 +74,18 @@ function amountInCents(value: string | number) {
 export function matchesBinanceTransaction(
   transaction: BinancePayTransaction,
   candidate: BinanceVerificationCandidate,
-  receivingUid: string,
+  receivingIdentifier: string,
 ) {
   const expectedCents = amountInCents(candidate.amountUsd);
   const transactionCents = amountInCents(transaction.amount ?? "");
+  const receiverMatches = [
+    transaction.receiverInfo?.binanceId,
+    transaction.receiverInfo?.accountId,
+  ].some((identifier) => String(identifier ?? "").trim() === receivingIdentifier);
   return Boolean(
     transaction.transactionId === candidate.transactionId &&
-      transaction.orderType === "C2C" &&
+      transaction.orderType &&
+      SUPPORTED_INCOMING_ORDER_TYPES.has(transaction.orderType) &&
       transaction.success !== false &&
       transaction.transactionTime &&
       transaction.transactionTime >= candidate.requestedAt.getTime() - 60_000 &&
@@ -87,8 +94,51 @@ export function matchesBinanceTransaction(
       expectedCents !== null &&
       transactionCents === expectedCents &&
       transactionCents > 0 &&
-      String(transaction.receiverInfo?.binanceId ?? "") === receivingUid,
+      receiverMatches,
   );
+}
+
+function mismatchReason(
+  transaction: BinancePayTransaction | undefined,
+  candidate: BinanceVerificationCandidate,
+  receivingIdentifier: string,
+) {
+  if (!transaction) {
+    return "No Binance record matched the submitted transaction ID.";
+  }
+  if (!transaction.orderType || !SUPPORTED_INCOMING_ORDER_TYPES.has(transaction.orderType)) {
+    return "The Binance transaction type is not an accepted incoming Pay transfer.";
+  }
+  if (transaction.success === false) {
+    return "The Binance transaction is not marked successful.";
+  }
+  if (
+    !transaction.transactionTime ||
+    transaction.transactionTime < candidate.requestedAt.getTime() - 60_000
+  ) {
+    return "The Binance transaction time does not match this payment request.";
+  }
+  if (transaction.currency !== "USDT") {
+    return "The Binance transaction currency is not USDT.";
+  }
+  const expectedCents = amountInCents(candidate.amountUsd);
+  const transactionCents = amountInCents(transaction.amount ?? "");
+  if (
+    expectedCents === null ||
+    transactionCents === null ||
+    transactionCents <= 0 ||
+    transactionCents !== expectedCents
+  ) {
+    return "The Binance transaction amount does not match the requested amount.";
+  }
+  const receiverMatches = [
+    transaction.receiverInfo?.binanceId,
+    transaction.receiverInfo?.accountId,
+  ].some((identifier) => String(identifier ?? "").trim() === receivingIdentifier);
+  if (!receiverMatches) {
+    return "The Binance transaction recipient does not match the configured Binance UID or Pay ID.";
+  }
+  return "The Binance transaction did not satisfy all verification checks.";
 }
 
 export function evaluateBinancePayment(
@@ -98,17 +148,25 @@ export function evaluateBinancePayment(
   now: number,
   claimedTransactionIds: ReadonlySet<string> = new Set(),
 ): BinanceVerificationResult {
-  const match = transactions.find((transaction) =>
-    matchesBinanceTransaction(transaction, candidate, receivingUid),
+  const submittedTransaction = transactions.find(
+    (transaction) => transaction.transactionId === candidate.transactionId,
   );
+  const match =
+    submittedTransaction &&
+    matchesBinanceTransaction(submittedTransaction, candidate, receivingUid)
+      ? submittedTransaction
+      : undefined;
 
   if (!match?.transactionId) {
     return now - candidate.requestedAt.getTime() < BINANCE_VERIFICATION_GRACE_MS
       ? { status: "pending" }
       : {
           status: "failed",
-          reason:
-            "No Binance record matched the submitted transaction ID, amount, currency, recipient, and payment type.",
+          reason: mismatchReason(
+            submittedTransaction,
+            candidate,
+            receivingUid,
+          ),
         };
   }
 
