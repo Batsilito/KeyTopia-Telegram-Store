@@ -47,7 +47,7 @@ export type BinanceFailureNotificationPlan = {
   reason: string;
 };
 
-export const BINANCE_VERIFICATION_GRACE_MS = 5 * 60 * 1000;
+export const BINANCE_VERIFICATION_GRACE_MS = 20 * 1000;
 const SUPPORTED_INCOMING_ORDER_TYPES = new Set(["C2C", "PAY"]);
 
 export function createBinanceFailureNotificationPlan(

@@ -49,6 +49,7 @@ import {
   storeSettings,
   supportMessages,
   supportTickets,
+  telegramPaymentNotifications,
   users,
   walletTopUps,
 } from "@workspace/db";
@@ -67,10 +68,14 @@ import {
   issueReferralRewardForOrder,
   notifyOrderConfirmed,
   notifyOrderDelivered,
+  processTelegramPaymentNotifications,
   sendAdminTelegramTest,
   sendSupportReply,
 } from "../bot";
-import { testBinanceApiConnectivity } from "../lib/binance-topups";
+import {
+  manuallyConfirmWalletTopUp,
+  testBinanceApiConnectivity,
+} from "../lib/binance-topups";
 
 const router: IRouter = Router();
 
@@ -716,6 +721,32 @@ router.get("/payments", async (req, res) => {
 router.post("/payments/:paymentId/confirm", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return res;
+  const manualTopUp = await manuallyConfirmWalletTopUp(
+    req.params.paymentId,
+    admin.id,
+  ).catch((error: unknown) => {
+    if (
+      error instanceof Error &&
+      error.message === "BINANCE_TRANSACTION_ALREADY_USED"
+    ) {
+      return "binance_transaction_already_used" as const;
+    }
+    throw error;
+  });
+  if (manualTopUp === "binance_transaction_already_used") {
+    return res.status(409).json({
+      error: "This Binance transaction ID was already used",
+    });
+  }
+  if (manualTopUp) {
+    void processTelegramPaymentNotifications();
+    const items = await listPaymentRows(1, { page: 1, pageSize: 1 });
+    return res.json(
+      items.find((item) => item.id === manualTopUp.id) ?? {
+        id: manualTopUp.id,
+      },
+    );
+  }
   const result = await db.transaction(async (tx) => {
     const paymentRows = await tx
       .update(payments)
@@ -728,7 +759,7 @@ router.post("/payments/:paymentId/confirm", async (req, res) => {
       .where(
         and(
           eq(payments.id, req.params.paymentId),
-          inArray(payments.status, ["pending", "submitted"]),
+          inArray(payments.status, ["pending", "submitted", "verification_failed"]),
         ),
       )
       .returning();
@@ -837,43 +868,77 @@ router.post("/payments/:paymentId/reject", async (req, res) => {
   if (!admin) return res;
   const parsed = RejectPaymentBody.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Rejection reason is required" });
-  const rows = await db
-    .update(payments)
-    .set({
-      status: "rejected",
-      rejectionReason: parsed.data.reason,
-      reviewedBy: admin.id,
-      reviewedAt: new Date(),
-      updatedAt: new Date(),
-    })
-    .where(
-      and(
-        eq(payments.id, req.params.paymentId),
-        inArray(payments.status, ["pending", "submitted"]),
-      ),
-    )
-    .returning();
-  if (!rows[0]) {
-    const topUpRows = await db
-      .update(walletTopUps)
+  const result = await db.transaction(async (tx) => {
+    const rows = await tx
+      .update(payments)
       .set({
-        status: "cancelled",
-        verificationFailureReason: parsed.data.reason,
+        status: "rejected",
+        rejectionReason: parsed.data.reason,
+        reviewedBy: admin.id,
+        reviewedAt: new Date(),
         updatedAt: new Date(),
       })
       .where(
         and(
-          eq(walletTopUps.id, req.params.paymentId),
-          inArray(walletTopUps.status, ["pending", "verification_failed"]),
+          eq(payments.id, req.params.paymentId),
+          inArray(payments.status, ["pending", "submitted", "verification_failed"]),
         ),
       )
-      .returning({ id: walletTopUps.id });
-    if (!topUpRows[0]) {
-      return res.status(409).json({ error: "Payment is already processed or missing" });
+      .returning();
+    const payment = rows[0];
+    const topUp = payment
+      ? undefined
+      : (
+          await tx
+            .update(walletTopUps)
+            .set({
+              status: "cancelled",
+              verificationFailureReason: parsed.data.reason,
+              updatedAt: new Date(),
+            })
+            .where(
+              and(
+                eq(walletTopUps.id, req.params.paymentId),
+                inArray(walletTopUps.status, ["pending", "verification_failed"]),
+              ),
+            )
+            .returning()
+        )[0];
+    const decision = payment ?? topUp;
+    if (!decision) return null;
+    const customer = await tx
+      .select({ telegramUserId: users.telegramUserId, language: users.language })
+      .from(users)
+      .where(eq(users.id, decision.userId))
+      .limit(1);
+    if (customer[0]) {
+      const isProduct = Boolean(payment);
+      await tx
+        .insert(telegramPaymentNotifications)
+        .values({
+          eventKey: `${isProduct ? "product-payment" : "wallet-top-up"}:${decision.id}:declined`,
+          telegramUserId: customer[0].telegramUserId,
+          language: customer[0].language,
+          eventType: "payment_declined",
+          payload: {
+            paymentKind: isProduct ? "product payment" : "wallet top-up",
+            amountUsd: isProduct ? payment!.usdAmount : topUp!.amountUsd,
+            transactionId: isProduct
+              ? payment!.transactionReference ?? "Not provided"
+              : topUp!.submittedTransactionId,
+            reason: parsed.data.reason,
+          },
+        })
+        .onConflictDoNothing();
     }
+    return { id: decision.id };
+  });
+  if (!result) {
+    return res.status(409).json({ error: "Payment is already processed or missing" });
   }
+  void processTelegramPaymentNotifications();
   const items = await listPaymentRows(1, { page: 1, pageSize: 1 });
-  const id = rows[0]?.id ?? req.params.paymentId;
+  const id = result.id;
   res.json(items.find((item) => item.id === id) ?? { id });
 });
 

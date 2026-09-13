@@ -2,7 +2,7 @@ import { Bot, InlineKeyboard, InputFile, Keyboard, webhookCallback, type Context
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { randomBytes, randomUUID } from "node:crypto";
-import { and, count, desc, eq, gt, inArray, isNull, lte, or, sum } from "drizzle-orm";
+import { and, count, desc, eq, gt, inArray, isNull, lte, or, sql, sum } from "drizzle-orm";
 import {
   checkoutSessions,
   db,
@@ -17,6 +17,7 @@ import {
   storeSettings,
   supportMessages,
   supportTickets,
+  telegramPaymentNotifications,
   referrals,
   walletTopUps,
   walletTransactions,
@@ -35,6 +36,7 @@ import { t, type BotLanguage } from "./locales";
 export const telegramBotToken = process.env.TELEGRAM_BOT_TOKEN;
 export const telegramBot = telegramBotToken ? new Bot(telegramBotToken) : null;
 let binanceProcessingPromise: Promise<void> | null = null;
+let paymentNotificationPromise: Promise<void> | null = null;
 let schedulerStarted = false;
 const BINANCE_POLL_INTERVAL_MS = 5_000;
 const BINANCE_SUBMISSION_RETRY_DELAYS_MS = [250, 1_000, 2_500, 5_000, 10_000, 20_000] as const;
@@ -472,30 +474,9 @@ export function processBinancePayments() {
     for (const payment of processedPayments) {
       try {
         if (payment.kind === "failure") {
-          const notificationPlan = createBinanceFailureNotificationPlan(payment);
-          await telegramBot!.api.sendMessage(
-            payment.telegramUserId,
-            t(payment.language, notificationPlan.customerMessageKey)
-              .replace("{amount}", Number(payment.amountUsd).toFixed(2))
-              .replace("{transaction}", escapeHtml(payment.transactionId))
-              .replace("{reason}", escapeHtml(payment.reason)),
-            {
-              parse_mode: "HTML",
-              reply_markup: customerKeyboard(payment.language),
-            },
-          );
           await notifyAdminBinanceVerificationFailure(payment);
         } else if (payment.kind === "order") {
           await notifyOrderConfirmed(payment.orderId);
-        } else {
-          await telegramBot!.api.sendMessage(
-            payment.telegramUserId,
-            t(payment.language, "topUpConfirmed").replace(
-              "{amount}",
-              Number(payment.amountUsd).toFixed(2),
-            ),
-            { parse_mode: "HTML", reply_markup: customerKeyboard(payment.language) },
-          );
         }
       } catch (error) {
         logger.warn(
@@ -504,6 +485,7 @@ export function processBinancePayments() {
         );
       }
     }
+    await processTelegramPaymentNotifications();
   })();
 
   binanceProcessingPromise = run;
@@ -516,6 +498,126 @@ export function processBinancePayments() {
     },
   );
   return run;
+}
+
+export function processTelegramPaymentNotifications() {
+  if (!telegramBot) return Promise.resolve();
+  if (paymentNotificationPromise) return paymentNotificationPromise;
+  const run = (async () => {
+    const events = await db
+      .select()
+      .from(telegramPaymentNotifications)
+      .where(isNull(telegramPaymentNotifications.sentAt))
+      .orderBy(telegramPaymentNotifications.createdAt)
+      .limit(50);
+    for (const event of events) {
+      try {
+        const payload = event.payload as {
+          paymentKind?: "wallet" | "order" | "wallet top-up" | "product payment";
+          amountUsd?: string;
+          transactionId?: string;
+          reason?: string;
+        };
+        let message: string;
+        if (event.eventType === "wallet_top_up_confirmed") {
+          message = t(event.language, "topUpConfirmed").replace(
+            "{amount}",
+            Number(payload.amountUsd ?? 0).toFixed(2),
+          );
+        } else if (event.eventType === "payment_declined") {
+          message = t(event.language, "paymentDeclinedByAdmin")
+            .replace("{kind}", escapeHtml(payload.paymentKind ?? "payment"))
+            .replace("{amount}", Number(payload.amountUsd ?? 0).toFixed(2))
+            .replace("{transaction}", escapeHtml(payload.transactionId ?? "Not provided"))
+            .replace("{reason}", escapeHtml(payload.reason ?? "Declined by admin"));
+        } else {
+          const key =
+            payload.paymentKind === "wallet"
+              ? "topUpVerificationFailed"
+              : "paymentVerificationFailed";
+          message = t(event.language, key)
+            .replace("{amount}", Number(payload.amountUsd ?? 0).toFixed(2))
+            .replace("{transaction}", escapeHtml(payload.transactionId ?? "Not provided"))
+            .replace("{reason}", escapeHtml(payload.reason ?? "Automatic verification failed"));
+        }
+        await telegramBot!.api.sendMessage(event.telegramUserId, message, {
+          parse_mode: "HTML",
+          reply_markup: customerKeyboard(event.language),
+        });
+        await db
+          .update(telegramPaymentNotifications)
+          .set({ sentAt: new Date(), lastError: null, updatedAt: new Date() })
+          .where(
+            and(
+              eq(telegramPaymentNotifications.id, event.id),
+              isNull(telegramPaymentNotifications.sentAt),
+            ),
+          );
+      } catch (error) {
+        await db
+          .update(telegramPaymentNotifications)
+          .set({
+            attempts: sql`${telegramPaymentNotifications.attempts} + 1`,
+            lastError: error instanceof Error ? error.message.slice(0, 500) : "Telegram send failed",
+            updatedAt: new Date(),
+          })
+          .where(eq(telegramPaymentNotifications.id, event.id));
+        logger.warn({ err: error, notificationId: event.id }, "Unable to send payment notification");
+      }
+    }
+  })();
+  paymentNotificationPromise = run;
+  void run.then(
+    () => {
+      if (paymentNotificationPromise === run) paymentNotificationPromise = null;
+    },
+    () => {
+      if (paymentNotificationPromise === run) paymentNotificationPromise = null;
+    },
+  );
+  return run;
+}
+
+export async function notifyWalletTopUpConfirmedByAdmin(input: {
+  telegramUserId: string;
+  language: "en" | "ar";
+  amountUsd: string;
+}) {
+  if (!telegramBot || !input.telegramUserId) return;
+  await telegramBot.api.sendMessage(
+    input.telegramUserId,
+    t(input.language, "topUpConfirmed").replace(
+      "{amount}",
+      Number(input.amountUsd).toFixed(2),
+    ),
+    {
+      parse_mode: "HTML",
+      reply_markup: customerKeyboard(input.language),
+    },
+  );
+}
+
+export async function notifyPaymentDeclinedByAdmin(input: {
+  telegramUserId: string;
+  language: "en" | "ar";
+  paymentKind: "wallet top-up" | "product payment";
+  amountUsd: string;
+  transactionId: string;
+  reason: string;
+}) {
+  if (!telegramBot || !input.telegramUserId) return;
+  await telegramBot.api.sendMessage(
+    input.telegramUserId,
+    t(input.language, "paymentDeclinedByAdmin")
+      .replace("{kind}", escapeHtml(input.paymentKind))
+      .replace("{amount}", Number(input.amountUsd).toFixed(2))
+      .replace("{transaction}", escapeHtml(input.transactionId))
+      .replace("{reason}", escapeHtml(input.reason)),
+    {
+      parse_mode: "HTML",
+      reply_markup: customerKeyboard(input.language),
+    },
+  );
 }
 
 function scheduleBinancePaymentProcessing() {
@@ -568,7 +670,7 @@ export function startStoreNotificationScheduler() {
     });
   };
   const runBinanceSafely = () => {
-    void processBinancePayments().catch((error) => {
+    void processBinancePayments().then(processTelegramPaymentNotifications).catch((error) => {
       logger.error({ err: error }, "Scheduled Binance payment check failed");
     });
   };

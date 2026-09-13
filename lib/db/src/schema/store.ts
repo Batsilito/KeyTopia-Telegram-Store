@@ -393,6 +393,28 @@ export const walletTopUps = pgTable(
   }),
 );
 
+export const telegramPaymentNotifications = pgTable(
+  "telegram_payment_notifications",
+  {
+    id: id(),
+    eventKey: text("event_key").notNull(),
+    telegramUserId: text("telegram_user_id").notNull(),
+    language: languageEnum("language").notNull(),
+    eventType: text("event_type").notNull(),
+    payload: jsonb("payload").notNull(),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    attempts: integer("attempts").default(0).notNull(),
+    lastError: text("last_error"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => ({
+    eventKeyIdx: uniqueIndex("telegram_payment_notifications_event_key_idx").on(
+      table.eventKey,
+    ),
+  }),
+);
+
 export const referrals = pgTable("referrals", {
   id: id(),
   referrerId: uuid("referrer_id").notNull(),

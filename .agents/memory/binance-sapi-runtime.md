@@ -9,8 +9,8 @@ Official Binance.com REST/SAPI hosts return HTTP 451 from the development runtim
 
 **How to apply:** Keep unverified Binance submissions in review. Only confirm automatically when signed Binance history succeeds and all existing transaction, recipient, amount, currency, type, status, and time checks pass. Use the published South America runtime for Binance.com verification; a development-shell IP is not evidence about production egress. Replit deployment metadata does not expose the selected geography. For Binance.us, redesign the flow around an API it actually supports.
 
-Submitted payments receive a five-minute visibility grace period. After that, a successful verifier/history lookup with no exact match is persisted as `verification_failed`, with no wallet credit or order creation.
+Submitted payments start verification immediately and receive rapid retries for 20 seconds. An exact signed-history match confirms automatically; otherwise the payment becomes an admin-review item. The buyer must receive both the immediate “checking” response and the final automatic or admin decision.
 
-**Why:** Binance records can appear shortly after the customer submits an ID, but silently retaining an old mismatch makes the admin queue ambiguous and gives buyers no resolution.
+**Why:** Binance records can take a few seconds to appear, so failing the first lookup rejects legitimate transfers. After bounded retries, an admin must be able to resolve a genuine payment that the API did not match.
 
-**How to apply:** Keep the grace period when changing polling or verifier logic. Failure notifications should be emitted only when the pending record transitions to `verification_failed`, so retries do not duplicate buyer/admin alerts.
+**How to apply:** Keep the 20-second retry window and show `verification_failed` as “Needs Review.” Admin acceptance is an explicit override that may credit/create an order only once through the global transaction claim. Admin decline must record a reason. Queue buyer result messages transactionally and retry delivery so a Telegram outage cannot lose the decision notice.

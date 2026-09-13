@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import { and, asc, eq, isNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import {
   binanceTransactionClaims,
   checkoutSessions,
@@ -8,6 +8,7 @@ import {
   paymentMethods,
   payments,
   products,
+  telegramPaymentNotifications,
   users,
   walletTopUps,
   walletTransactions,
@@ -300,12 +301,116 @@ async function confirmWalletTopUp(
       .from(users)
       .where(eq(users.id, topUp.userId))
       .limit(1);
+    if (customer[0]) {
+      await tx
+        .insert(telegramPaymentNotifications)
+        .values({
+          eventKey: `wallet-top-up:${topUp.id}:confirmed`,
+          telegramUserId: customer[0].telegramUserId,
+          language: customer[0].language,
+          eventType: "wallet_top_up_confirmed",
+          payload: {
+            amountUsd: topUp.amountUsd,
+            transactionId,
+          },
+        })
+        .onConflictDoNothing();
+    }
     return customer[0]
       ? {
           telegramUserId: customer[0].telegramUserId,
           language: customer[0].language,
         }
       : null;
+  });
+}
+
+export async function manuallyConfirmWalletTopUp(
+  topUpId: string,
+  adminId: string,
+) {
+  return db.transaction(async (tx) => {
+    const rows = await tx
+      .select()
+      .from(walletTopUps)
+      .where(
+        and(
+          eq(walletTopUps.id, topUpId),
+          inArray(walletTopUps.status, ["pending", "verification_failed"]),
+          isNull(walletTopUps.confirmedBinanceTransactionId),
+        ),
+      )
+      .limit(1);
+    const topUp = rows[0];
+    if (!topUp) return null;
+
+    const transactionClaim = await tx
+      .insert(binanceTransactionClaims)
+      .values({
+        transactionId: topUp.submittedTransactionId,
+        purpose: "wallet_top_up",
+        referenceId: topUp.id,
+      })
+      .onConflictDoNothing()
+      .returning({ id: binanceTransactionClaims.id });
+    if (!transactionClaim[0]) {
+      throw new Error("BINANCE_TRANSACTION_ALREADY_USED");
+    }
+
+    const confirmed = await tx
+      .update(walletTopUps)
+      .set({
+        status: "confirmed",
+        confirmedBinanceTransactionId: topUp.submittedTransactionId,
+        confirmedAt: new Date(),
+        verificationFailureReason: null,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(walletTopUps.id, topUp.id),
+          inArray(walletTopUps.status, ["pending", "verification_failed"]),
+          isNull(walletTopUps.confirmedBinanceTransactionId),
+        ),
+      )
+      .returning();
+    if (!confirmed[0]) {
+      throw new Error(`Unable to manually confirm wallet top-up ${topUp.id}`);
+    }
+
+    await tx.insert(walletTransactions).values({
+      userId: topUp.userId,
+      adminId,
+      type: "top_up",
+      amountUsd: topUp.amountUsd,
+      reason: "Manual admin-approved Binance wallet top-up",
+      reference: `binance-admin:${topUp.submittedTransactionId}`,
+    });
+    const customer = await tx
+      .select({ telegramUserId: users.telegramUserId, language: users.language })
+      .from(users)
+      .where(eq(users.id, topUp.userId))
+      .limit(1);
+    if (customer[0]) {
+      await tx
+        .insert(telegramPaymentNotifications)
+        .values({
+          eventKey: `wallet-top-up:${topUp.id}:confirmed`,
+          telegramUserId: customer[0].telegramUserId,
+          language: customer[0].language,
+          eventType: "wallet_top_up_confirmed",
+          payload: {
+            amountUsd: topUp.amountUsd,
+            transactionId: topUp.submittedTransactionId,
+          },
+        })
+        .onConflictDoNothing();
+    }
+    return {
+      ...confirmed[0],
+      telegramUserId: customer[0]?.telegramUserId ?? "",
+      language: customer[0]?.language ?? ("en" as const),
+    };
   });
 }
 
@@ -438,6 +543,21 @@ async function failWalletTopUp(
       .where(eq(users.id, topUp.userId))
       .limit(1);
     if (!customer[0]) return null;
+    await tx
+      .insert(telegramPaymentNotifications)
+      .values({
+        eventKey: `wallet-top-up:${topUp.id}:verification-failed`,
+        telegramUserId: customer[0].telegramUserId,
+        language: customer[0].language,
+        eventType: "verification_failed",
+        payload: {
+          paymentKind: "wallet",
+          amountUsd: topUp.amountUsd,
+          transactionId: topUp.submittedTransactionId,
+          reason,
+        },
+      })
+      .onConflictDoNothing();
     return {
       kind: "failure",
       paymentKind: "wallet",
@@ -476,6 +596,21 @@ async function failProductPayment(
       .where(eq(users.id, payment.userId))
       .limit(1);
     if (!customer[0]) return null;
+    await tx
+      .insert(telegramPaymentNotifications)
+      .values({
+        eventKey: `product-payment:${payment.id}:verification-failed`,
+        telegramUserId: customer[0].telegramUserId,
+        language: customer[0].language,
+        eventType: "verification_failed",
+        payload: {
+          paymentKind: "order",
+          amountUsd: payment.amountUsd,
+          transactionId: payment.submittedTransactionId,
+          reason,
+        },
+      })
+      .onConflictDoNothing();
     return {
       kind: "failure",
       paymentKind: "order",

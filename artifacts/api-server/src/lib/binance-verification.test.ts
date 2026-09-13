@@ -130,7 +130,7 @@ test("fails a wrong recipient without authorizing a payment", () => {
   assert.notEqual(result.status, "confirmed");
 });
 
-test("keeps a payment pending when Binance visibility is delayed within the grace period", () => {
+test("keeps a newly submitted unmatched payment pending during rapid retries", () => {
   const result = evaluateBinancePayment(
     candidate({ requestedAt: new Date(now - 4 * 60 * 1000) }),
     [],
@@ -138,7 +138,13 @@ test("keeps a payment pending when Binance visibility is delayed within the grac
     now,
   );
 
-  assert.deepEqual(result, { status: "pending" });
+  const recent = evaluateBinancePayment(
+    candidate({ requestedAt: new Date(now - 5_000) }),
+    [],
+    receivingUid,
+    now,
+  );
+  assert.deepEqual(recent, { status: "pending" });
   assert.notEqual(result.status, "confirmed");
 });
 
