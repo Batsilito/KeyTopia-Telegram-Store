@@ -1449,6 +1449,34 @@ async function getProductAvailability(product: typeof products.$inferSelect) {
   return { inStock: quantity > 0, quantity: String(quantity) };
 }
 
+async function replaceCallbackMessage(
+  ctx: Context,
+  text: string,
+  options: {
+    parse_mode?: "HTML";
+    reply_markup?: InlineKeyboard;
+  } = {},
+) {
+  const message = ctx.callbackQuery?.message;
+  if (message) {
+    try {
+      if ("photo" in message) {
+        await ctx.editMessageCaption({
+          caption: text,
+          ...options,
+        });
+      } else {
+        await ctx.editMessageText(text, options);
+      }
+      return true;
+    } catch (error) {
+      logger.warn({ err: error }, "Unable to edit Telegram callback message; sending replacement");
+    }
+  }
+  await ctx.reply(text, options);
+  return false;
+}
+
 async function showShop(ctx: Context, user: typeof users.$inferSelect, requestedPage = 0, editMessage = false) {
   if (!(await ensureAccess(ctx, user))) return;
   const language = languageOf(user);
@@ -1458,7 +1486,13 @@ async function showShop(ctx: Context, user: typeof users.$inferSelect, requested
     .where(eq(products.active, true))
     .orderBy(desc(products.createdAt));
   if (rows.length === 0) {
-    await ctx.reply(t(language, "noProducts"), { reply_markup: customerKeyboard(language) });
+    if (ctx.callbackQuery) {
+      await replaceCallbackMessage(ctx, t(language, "noProducts"), {
+        reply_markup: customerKeyboard(language),
+      });
+    } else {
+      await ctx.reply(t(language, "noProducts"), { reply_markup: customerKeyboard(language) });
+    }
     return;
   }
   const stockRows = await db
@@ -1511,7 +1545,7 @@ async function showShop(ctx: Context, user: typeof users.$inferSelect, requested
   const text = "\u2060";
 
   if (editMessage && ctx.callbackQuery) {
-    await ctx.editMessageText(text, { reply_markup: keyboard });
+    await replaceCallbackMessage(ctx, text, { reply_markup: keyboard });
   } else {
     await ctx.reply(text, { reply_markup: keyboard });
   }
@@ -1558,7 +1592,16 @@ async function showProduct(ctx: Context, user: typeof users.$inferSelect, produc
     "",
     `📦 ${t(language, "deliveryNotice")}`,
   ].join("\n");
-  if (product.imageUrl) {
+  if (product.imageUrl && ctx.callbackQuery?.message && !("photo" in ctx.callbackQuery.message)) {
+    try {
+      await ctx.api.deleteMessage(ctx.chat!.id, ctx.callbackQuery.message.message_id);
+      await ctx.replyWithPhoto(product.imageUrl, { caption: details, reply_markup: keyboard });
+      return;
+    } catch (error) {
+      logger.warn({ err: error, productId: product.id }, "Unable to replace product message with image");
+    }
+  }
+  if (product.imageUrl && !ctx.callbackQuery) {
     try {
       await ctx.replyWithPhoto(product.imageUrl, { caption: details, reply_markup: keyboard });
       return;
@@ -1566,7 +1609,7 @@ async function showProduct(ctx: Context, user: typeof users.$inferSelect, produc
       logger.warn({ err: error, productId: product.id }, "Unable to send product image");
     }
   }
-  await ctx.reply(details, { reply_markup: keyboard });
+  await replaceCallbackMessage(ctx, details, { parse_mode: "HTML", reply_markup: keyboard });
 }
 
 async function showQuantitySelector(ctx: Context, user: typeof users.$inferSelect, productId: string, requestedQuantity = 1) {
@@ -1607,7 +1650,7 @@ async function showQuantitySelector(ctx: Context, user: typeof users.$inferSelec
     "",
     `<i>${t(language, "quantityCheckNotice")}</i>`,
   ].join("\n");
-  await ctx.reply(text, { parse_mode: "HTML", reply_markup: keyboard });
+  await replaceCallbackMessage(ctx, text, { parse_mode: "HTML", reply_markup: keyboard });
 }
 
 async function beginCheckout(ctx: Context, user: typeof users.$inferSelect, productId: string, requestedQuantity = 1) {
@@ -1704,7 +1747,7 @@ async function beginCheckout(ctx: Context, user: typeof users.$inferSelect, prod
     "",
     `⏱ <b>${t(language, "paymentWindow")}:</b> ${timeoutMinutes} minutes`,
   ].join("\n");
-  await ctx.reply(summary, { parse_mode: "HTML", reply_markup: keyboard });
+  await replaceCallbackMessage(ctx, summary, { parse_mode: "HTML", reply_markup: keyboard });
 }
 
 async function cancelCheckout(ctx: Context, user: typeof users.$inferSelect, checkoutId: string) {
@@ -1731,7 +1774,8 @@ async function cancelCheckout(ctx: Context, user: typeof users.$inferSelect, che
     }
     return rows;
   });
-  await ctx.reply(
+  await replaceCallbackMessage(
+    ctx,
     cancelled[0]
       ? t(languageOf(user), "paymentCancelled")
       : t(languageOf(user), "error"),
@@ -1853,7 +1897,8 @@ async function payCheckoutWithWallet(
 
   const language = languageOf(user);
   if (result.status === "insufficient") {
-    await ctx.reply(
+    await replaceCallbackMessage(
+      ctx,
       t(language, "walletInsufficientBalance")
         .replace("{balance}", result.balance)
         .replace("{amount}", result.amount),
@@ -1862,7 +1907,7 @@ async function payCheckoutWithWallet(
     return true;
   }
   if (result.status === "unavailable") {
-    await ctx.reply(t(language, "walletPaymentAlreadyProcessed"), {
+    await replaceCallbackMessage(ctx, t(language, "walletPaymentAlreadyProcessed"), {
       reply_markup: customerKeyboard(language),
     });
     return true;
@@ -1870,7 +1915,7 @@ async function payCheckoutWithWallet(
 
   const notified = await notifyOrderConfirmed(result.orderId);
   if (!notified) {
-    await ctx.reply(t(language, "walletPaymentConfirmed"), {
+    await replaceCallbackMessage(ctx, t(language, "walletPaymentConfirmed"), {
       reply_markup: customerKeyboard(language),
     });
   }
@@ -1893,7 +1938,7 @@ async function showPayment(
   const config = await db.select().from(paymentMethods).where(and(eq(paymentMethods.method, method), eq(paymentMethods.enabled, true))).limit(1);
   const language = languageOf(user);
   if (!config[0]) {
-    await ctx.reply(t(language, "paymentUnavailable"));
+    await replaceCallbackMessage(ctx, t(language, "paymentUnavailable"));
     return;
   }
   const instructions = language === "ar" ? config[0].instructionsAr : config[0].instructionsEn;
@@ -1927,11 +1972,23 @@ async function showPayment(
       ].filter(Boolean).join("\n");
   const logoPath = paymentLogoPath(method);
   if (logoPath) {
+    if (ctx.callbackQuery?.message) {
+      try {
+        await ctx.api.deleteMessage(ctx.chat!.id, ctx.callbackQuery.message.message_id);
+      } catch (error) {
+        logger.warn({ err: error }, "Unable to remove checkout message before payment logo");
+      }
+    }
     await ctx.replyWithPhoto(new InputFile(logoPath), {
-      caption: paymentMethodLabel(method),
+      caption: paymentMethodLabel(method, language),
     });
+    await ctx.reply(details, {
+      parse_mode: "HTML",
+      reply_markup: new InlineKeyboard().text(t(language, "iHavePaid"), `paid:${checkoutId}`).row().text(t(language, "cancel"), `checkout:cancel:${checkoutId}`),
+    });
+    return;
   }
-  await ctx.reply(details, {
+  await replaceCallbackMessage(ctx, details, {
     parse_mode: "HTML",
     reply_markup: new InlineKeyboard().text(t(language, "iHavePaid"), `paid:${checkoutId}`).row().text(t(language, "cancel"), `checkout:cancel:${checkoutId}`),
   });
@@ -2104,7 +2161,7 @@ export function buildTelegramBot() {
       return;
     }
     if (data === "nav:shop") {
-      await showShop(ctx, user);
+      await showShop(ctx, user, 0, true);
       return;
     }
     if (data.startsWith("shop:page:")) {
@@ -2174,7 +2231,8 @@ export function buildTelegramBot() {
           ),
         )
         .limit(1);
-      await ctx.reply(
+      await replaceCallbackMessage(
+        ctx,
         checkout[0]?.paymentMethod === "binance"
           ? t(languageOf(user), "enterBinanceTransactionId")
           : t(languageOf(user), "enterReference"),
