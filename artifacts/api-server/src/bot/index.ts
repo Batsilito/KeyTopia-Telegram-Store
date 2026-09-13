@@ -2159,7 +2159,7 @@ export function buildTelegramBot() {
     }
     if (data.startsWith("method:")) {
       const [, checkoutId, method] = data.split(":");
-      await showPayment(ctx, user, checkoutId, method as "binance" | "bybit" | "vodafone_cash" | "instapay");
+      await showPayment(ctx, user, checkoutId, method as CheckoutPaymentMethod);
       return;
     }
     if (data.startsWith("paid:")) {

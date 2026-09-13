@@ -263,6 +263,7 @@ export type OrderPaymentMethod = typeof OrderPaymentMethod[keyof typeof OrderPay
 
 
 export const OrderPaymentMethod = {
+  wallet: 'wallet',
   binance: 'binance',
   bybit: 'bybit',
   vodafone_cash: 'vodafone_cash',
@@ -333,6 +334,7 @@ export type PaymentPaymentMethod = typeof PaymentPaymentMethod[keyof typeof Paym
 
 
 export const PaymentPaymentMethod = {
+  wallet: 'wallet',
   binance: 'binance',
   bybit: 'bybit',
   vodafone_cash: 'vodafone_cash',

@@ -850,7 +850,7 @@ components:
         priceUsd: { type: number }
         paymentMethod:
           type: string
-          enum: [binance, bybit, vodafone_cash, instapay]
+          enum: [wallet, binance, bybit, vodafone_cash, instapay]
         status:
           type: string
           enum: [paid, processing, delivered, cancelled]
@@ -890,7 +890,7 @@ components:
         productName: { type: string }
         paymentMethod:
           type: string
-          enum: [binance, bybit, vodafone_cash, instapay]
+          enum: [wallet, binance, bybit, vodafone_cash, instapay]
         usdAmount: { type: number }
         egpAmount: { type: ["number", "null"] }
         transactionReference: { type: ["string", "null"] }
