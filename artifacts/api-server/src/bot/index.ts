@@ -2,7 +2,7 @@ import { Bot, InlineKeyboard, InputFile, Keyboard, webhookCallback, type Context
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { randomBytes, randomUUID } from "node:crypto";
-import { and, count, desc, eq, gt, inArray, isNull, lte, or, sql, sum } from "drizzle-orm";
+import { and, count, desc, eq, gt, inArray, isNull, lte, ne, or, sql, sum } from "drizzle-orm";
 import {
   checkoutSessions,
   db,
@@ -26,6 +26,7 @@ import {
 import { logger } from "../lib/logger";
 import {
   pollBinancePayments,
+  upsertTelegramPaymentNotification,
   type FailedBinancePayment,
 } from "../lib/binance-topups";
 import { createBinanceFailureNotificationPlan } from "../lib/binance-verification";
@@ -40,6 +41,7 @@ let paymentNotificationPromise: Promise<void> | null = null;
 let schedulerStarted = false;
 const BINANCE_POLL_INTERVAL_MS = 5_000;
 const BINANCE_SUBMISSION_RETRY_DELAYS_MS = [250, 1_000, 2_500, 5_000, 10_000, 20_000] as const;
+const verificationAnimationTimers = new Map<string, ReturnType<typeof setInterval>>();
 
 function languageOf(user: typeof users.$inferSelect): BotLanguage {
   return user.language;
@@ -49,6 +51,74 @@ function customerKeyboard(language: BotLanguage) {
   return new Keyboard()
     .text(t(language, "menu"))
     .resized();
+}
+
+function verificationAnimationKey(telegramUserId: string, messageId: number) {
+  return `${telegramUserId}:${messageId}`;
+}
+
+function startVerificationAnimation(
+  telegramUserId: string,
+  messageId: number,
+  language: BotLanguage,
+) {
+  if (!telegramBot) return;
+  const key = verificationAnimationKey(telegramUserId, messageId);
+  const previous = verificationAnimationTimers.get(key);
+  if (previous) clearInterval(previous);
+  let frame = 0;
+  const timer = setInterval(() => {
+    frame = (frame + 1) % 4;
+    void telegramBot.api
+      .editMessageText(
+        telegramUserId,
+        messageId,
+        t(language, "paymentVerificationLoading").replace("{dots}", ".".repeat(frame)),
+      )
+      .catch(() => {
+        // The final notification or a deleted Telegram message ends the animation.
+      });
+  }, 700);
+  timer.unref();
+  verificationAnimationTimers.set(key, timer);
+}
+
+async function dismissVerificationMessage(
+  telegramUserId: string,
+  messageId: number | undefined,
+) {
+  if (!telegramBot || !messageId) return;
+  const key = verificationAnimationKey(telegramUserId, messageId);
+  const timer = verificationAnimationTimers.get(key);
+  if (timer) {
+    clearInterval(timer);
+    verificationAnimationTimers.delete(key);
+  }
+  try {
+    await telegramBot.api.deleteMessage(telegramUserId, messageId);
+  } catch {
+    // The message may already have been removed or become inaccessible.
+  }
+}
+
+export async function clearPaymentVerificationMessage(eventKey: string) {
+  const events = await db
+    .select({
+      id: telegramPaymentNotifications.id,
+      telegramUserId: telegramPaymentNotifications.telegramUserId,
+      payload: telegramPaymentNotifications.payload,
+    })
+    .from(telegramPaymentNotifications)
+    .where(eq(telegramPaymentNotifications.eventKey, eventKey))
+    .limit(1);
+  const event = events[0];
+  if (!event) return;
+  const payload = event.payload as { verificationMessageId?: number };
+  await dismissVerificationMessage(event.telegramUserId, Number(payload.verificationMessageId));
+  await db
+    .update(telegramPaymentNotifications)
+    .set({ sentAt: new Date(), updatedAt: new Date() })
+    .where(eq(telegramPaymentNotifications.id, event.id));
 }
 
 function mainMenuKeyboard(language: BotLanguage) {
@@ -478,6 +548,9 @@ export function processBinancePayments() {
         if (payment.kind === "failure") {
           await notifyAdminBinanceVerificationFailure(payment);
         } else if (payment.kind === "order") {
+          await clearPaymentVerificationMessage(
+            `product-payment:${payment.orderId}:verification`,
+          );
           await notifyOrderConfirmed(payment.orderId);
         }
       } catch (error) {
@@ -509,7 +582,12 @@ export function processTelegramPaymentNotifications() {
     const events = await db
       .select()
       .from(telegramPaymentNotifications)
-      .where(isNull(telegramPaymentNotifications.sentAt))
+      .where(
+        and(
+          isNull(telegramPaymentNotifications.sentAt),
+          ne(telegramPaymentNotifications.eventType, "verification_pending"),
+        ),
+      )
       .orderBy(telegramPaymentNotifications.createdAt)
       .limit(50);
     for (const event of events) {
@@ -519,6 +597,7 @@ export function processTelegramPaymentNotifications() {
           amountUsd?: string;
           transactionId?: string;
           reason?: string;
+          verificationMessageId?: number;
         };
         let message: string;
         if (event.eventType === "wallet_top_up_confirmed") {
@@ -542,6 +621,10 @@ export function processTelegramPaymentNotifications() {
             .replace("{transaction}", escapeHtml(payload.transactionId ?? "Not provided"))
             .replace("{reason}", escapeHtml(payload.reason ?? "Automatic verification failed"));
         }
+        await dismissVerificationMessage(
+          event.telegramUserId,
+          Number(payload.verificationMessageId),
+        );
         await telegramBot!.api.sendMessage(event.telegramUserId, message, {
           parse_mode: "HTML",
           reply_markup: customerKeyboard(event.language),
