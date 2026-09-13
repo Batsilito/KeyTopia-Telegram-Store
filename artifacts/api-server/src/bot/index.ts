@@ -1454,22 +1454,38 @@ async function replaceCallbackMessage(
   text: string,
   options: {
     parse_mode?: "HTML";
-    reply_markup?: InlineKeyboard;
+    reply_markup?: InlineKeyboard | Keyboard;
   } = {},
 ) {
   const message = ctx.callbackQuery?.message;
+  const inlineReplyMarkup =
+    options.reply_markup && "inline_keyboard" in options.reply_markup
+      ? options.reply_markup
+      : undefined;
   if (message) {
     try {
       if ("photo" in message) {
         await ctx.editMessageCaption({
           caption: text,
-          ...options,
+          parse_mode: options.parse_mode,
+          ...(inlineReplyMarkup ? { reply_markup: inlineReplyMarkup } : {}),
         });
       } else {
-        await ctx.editMessageText(text, options);
+        await ctx.editMessageText(text, {
+          parse_mode: options.parse_mode,
+          ...(inlineReplyMarkup ? { reply_markup: inlineReplyMarkup } : {}),
+        });
       }
       return true;
     } catch (error) {
+      if (
+        error &&
+        typeof error === "object" &&
+        "description" in error &&
+        String(error.description).includes("message is not modified")
+      ) {
+        return true;
+      }
       logger.warn({ err: error }, "Unable to edit Telegram callback message; sending replacement");
     }
   }
