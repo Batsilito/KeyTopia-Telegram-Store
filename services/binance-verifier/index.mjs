@@ -36,6 +36,19 @@ function validServiceToken(request) {
   return expected.length === actual.length && timingSafeEqual(expected, actual);
 }
 
+function normalizedIdentifier(value) {
+  return String(value ?? "").trim();
+}
+
+function submittedIdentifierMatches(transaction, submittedIdentifier) {
+  return [
+    transaction.orderId,
+    transaction.prepayId,
+    transaction.merchantTradeNo,
+    transaction.transactionId,
+  ].some((identifier) => normalizedIdentifier(identifier) === submittedIdentifier.trim());
+}
+
 function matchesTransaction(transaction, candidate) {
   const expectedCents = amountInCents(candidate.amountUsd);
   const transactionCents = amountInCents(transaction.amount ?? "");
@@ -44,7 +57,7 @@ function matchesTransaction(transaction, candidate) {
     transaction.receiverInfo?.accountId,
   ].some((identifier) => String(identifier ?? "").trim() === candidate.receivingUid);
   return Boolean(
-    transaction.transactionId === candidate.transactionId &&
+      submittedIdentifierMatches(transaction, candidate.transactionId) &&
       ["C2C", "PAY"].includes(transaction.orderType) &&
       transaction.success !== false &&
       transaction.transactionTime &&

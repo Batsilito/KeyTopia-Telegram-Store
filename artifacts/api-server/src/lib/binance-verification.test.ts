@@ -68,6 +68,26 @@ test("confirms an exact Binance Pay ID match from the receiver accountId", () =>
   });
 });
 
+test("confirms the Binance Order ID shown in Payment Details", () => {
+  const orderId = "454026634633707520";
+  const result = evaluateBinancePayment(
+    candidate({ transactionId: orderId }),
+    [
+      transaction({
+        transactionId: "M_P_71505104267788288",
+        orderId,
+      }),
+    ],
+    receivingUid,
+    now,
+  );
+
+  assert.deepEqual(result, {
+    status: "confirmed",
+    transactionId: orderId,
+  });
+});
+
 test("confirms an exact Binance match for a product payment", () => {
   const result = evaluateBinancePayment(
     candidate({ transactionId: "tx-product-001", amountUsd: "49.99" }),

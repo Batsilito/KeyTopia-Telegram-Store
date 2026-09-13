@@ -1,6 +1,9 @@
 export type BinancePayTransaction = {
   orderType?: string;
-  transactionId?: string;
+  transactionId?: string | number;
+  orderId?: string | number;
+  prepayId?: string | number;
+  merchantTradeNo?: string | number;
   transactionTime?: number;
   amount?: string;
   currency?: string;
@@ -50,6 +53,24 @@ export type BinanceFailureNotificationPlan = {
 export const BINANCE_VERIFICATION_GRACE_MS = 20 * 1000;
 const SUPPORTED_INCOMING_ORDER_TYPES = new Set(["C2C", "PAY"]);
 
+function normalizedIdentifier(value: string | number | undefined) {
+  return String(value ?? "").trim();
+}
+
+function submittedIdentifierMatches(
+  transaction: BinancePayTransaction,
+  submittedIdentifier: string,
+) {
+  return [
+    transaction.orderId,
+    transaction.prepayId,
+    transaction.merchantTradeNo,
+    transaction.transactionId,
+  ].some(
+    (identifier) => normalizedIdentifier(identifier) === submittedIdentifier.trim(),
+  );
+}
+
 export function createBinanceFailureNotificationPlan(
   payment: BinanceFailureNotificationInput,
 ): BinanceFailureNotificationPlan {
@@ -83,7 +104,7 @@ export function matchesBinanceTransaction(
     transaction.receiverInfo?.accountId,
   ].some((identifier) => String(identifier ?? "").trim() === receivingIdentifier);
   return Boolean(
-    transaction.transactionId === candidate.transactionId &&
+    submittedIdentifierMatches(transaction, candidate.transactionId) &&
       transaction.orderType &&
       SUPPORTED_INCOMING_ORDER_TYPES.has(transaction.orderType) &&
       transaction.success !== false &&
@@ -149,7 +170,7 @@ export function evaluateBinancePayment(
   claimedTransactionIds: ReadonlySet<string> = new Set(),
 ): BinanceVerificationResult {
   const submittedTransaction = transactions.find(
-    (transaction) => transaction.transactionId === candidate.transactionId,
+    (transaction) => submittedIdentifierMatches(transaction, candidate.transactionId),
   );
   const match =
     submittedTransaction &&
@@ -157,7 +178,7 @@ export function evaluateBinancePayment(
       ? submittedTransaction
       : undefined;
 
-  if (!match?.transactionId) {
+  if (!match) {
     return now - candidate.requestedAt.getTime() < BINANCE_VERIFICATION_GRACE_MS
       ? { status: "pending" }
       : {
@@ -170,7 +191,7 @@ export function evaluateBinancePayment(
         };
   }
 
-  if (claimedTransactionIds.has(match.transactionId)) {
+  if (claimedTransactionIds.has(candidate.transactionId)) {
     return {
       status: "failed",
       reason: "This Binance transaction ID has already been used for another payment.",
@@ -179,6 +200,6 @@ export function evaluateBinancePayment(
 
   return {
     status: "confirmed",
-    transactionId: match.transactionId,
+    transactionId: candidate.transactionId,
   };
 }
