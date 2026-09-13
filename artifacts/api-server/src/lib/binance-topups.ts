@@ -29,6 +29,49 @@ const BINANCE_API_BASE_URLS = [
 const POLL_LOOKBACK_MS = 15 * 60 * 1000;
 const MAX_PENDING_PAYMENTS = 100;
 
+export async function upsertTelegramPaymentNotification(
+  tx: any,
+  input: {
+    eventKey: string;
+    telegramUserId: string;
+    language: "en" | "ar";
+    eventType: string;
+    payload: Record<string, unknown>;
+  },
+) {
+  const existing = await tx
+    .select({ payload: telegramPaymentNotifications.payload })
+    .from(telegramPaymentNotifications)
+    .where(eq(telegramPaymentNotifications.eventKey, input.eventKey))
+    .limit(1);
+  const payload = {
+    ...((existing[0]?.payload as Record<string, unknown> | undefined) ?? {}),
+    ...input.payload,
+  };
+  if (existing[0]) {
+    await tx
+      .update(telegramPaymentNotifications)
+      .set({
+        telegramUserId: input.telegramUserId,
+        language: input.language,
+        eventType: input.eventType,
+        payload,
+        sentAt: null,
+        lastError: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(telegramPaymentNotifications.eventKey, input.eventKey));
+    return;
+  }
+  await tx.insert(telegramPaymentNotifications).values({
+    eventKey: input.eventKey,
+    telegramUserId: input.telegramUserId,
+    language: input.language,
+    eventType: input.eventType,
+    payload,
+  });
+}
+
 export type BinanceApiHostDiagnostic = {
   host: string;
   publicStatus: number | null;
@@ -302,19 +345,16 @@ async function confirmWalletTopUp(
       .where(eq(users.id, topUp.userId))
       .limit(1);
     if (customer[0]) {
-      await tx
-        .insert(telegramPaymentNotifications)
-        .values({
-          eventKey: `wallet-top-up:${topUp.id}:confirmed`,
-          telegramUserId: customer[0].telegramUserId,
-          language: customer[0].language,
-          eventType: "wallet_top_up_confirmed",
-          payload: {
-            amountUsd: topUp.amountUsd,
-            transactionId,
-          },
-        })
-        .onConflictDoNothing();
+      await upsertTelegramPaymentNotification(tx, {
+        eventKey: `wallet-top-up:${topUp.id}:confirmed`,
+        telegramUserId: customer[0].telegramUserId,
+        language: customer[0].language,
+        eventType: "wallet_top_up_confirmed",
+        payload: {
+          amountUsd: topUp.amountUsd,
+          transactionId,
+        },
+      });
     }
     return customer[0]
       ? {
@@ -392,19 +432,16 @@ export async function manuallyConfirmWalletTopUp(
       .where(eq(users.id, topUp.userId))
       .limit(1);
     if (customer[0]) {
-      await tx
-        .insert(telegramPaymentNotifications)
-        .values({
-          eventKey: `wallet-top-up:${topUp.id}:confirmed`,
-          telegramUserId: customer[0].telegramUserId,
-          language: customer[0].language,
-          eventType: "wallet_top_up_confirmed",
-          payload: {
-            amountUsd: topUp.amountUsd,
-            transactionId: topUp.submittedTransactionId,
-          },
-        })
-        .onConflictDoNothing();
+      await upsertTelegramPaymentNotification(tx, {
+        eventKey: `wallet-top-up:${topUp.id}:confirmed`,
+        telegramUserId: customer[0].telegramUserId,
+        language: customer[0].language,
+        eventType: "wallet_top_up_confirmed",
+        payload: {
+          amountUsd: topUp.amountUsd,
+          transactionId: topUp.submittedTransactionId,
+        },
+      });
     }
     return {
       ...confirmed[0],
@@ -543,21 +580,18 @@ async function failWalletTopUp(
       .where(eq(users.id, topUp.userId))
       .limit(1);
     if (!customer[0]) return null;
-    await tx
-      .insert(telegramPaymentNotifications)
-      .values({
-        eventKey: `wallet-top-up:${topUp.id}:verification-failed`,
-        telegramUserId: customer[0].telegramUserId,
-        language: customer[0].language,
-        eventType: "verification_failed",
-        payload: {
-          paymentKind: "wallet",
-          amountUsd: topUp.amountUsd,
-          transactionId: topUp.submittedTransactionId,
-          reason,
-        },
-      })
-      .onConflictDoNothing();
+    await upsertTelegramPaymentNotification(tx, {
+      eventKey: `wallet-top-up:${topUp.id}:verification-failed`,
+      telegramUserId: customer[0].telegramUserId,
+      language: customer[0].language,
+      eventType: "verification_failed",
+      payload: {
+        paymentKind: "wallet",
+        amountUsd: topUp.amountUsd,
+        transactionId: topUp.submittedTransactionId,
+        reason,
+      },
+    });
     return {
       kind: "failure",
       paymentKind: "wallet",
@@ -596,21 +630,18 @@ async function failProductPayment(
       .where(eq(users.id, payment.userId))
       .limit(1);
     if (!customer[0]) return null;
-    await tx
-      .insert(telegramPaymentNotifications)
-      .values({
-        eventKey: `product-payment:${payment.id}:verification-failed`,
-        telegramUserId: customer[0].telegramUserId,
-        language: customer[0].language,
-        eventType: "verification_failed",
-        payload: {
-          paymentKind: "order",
-          amountUsd: payment.amountUsd,
-          transactionId: payment.submittedTransactionId,
-          reason,
-        },
-      })
-      .onConflictDoNothing();
+    await upsertTelegramPaymentNotification(tx, {
+      eventKey: `product-payment:${payment.id}:verification-failed`,
+      telegramUserId: customer[0].telegramUserId,
+      language: customer[0].language,
+      eventType: "verification_failed",
+      payload: {
+        paymentKind: "order",
+        amountUsd: payment.amountUsd,
+        transactionId: payment.submittedTransactionId,
+        reason,
+      },
+    });
     return {
       kind: "failure",
       paymentKind: "order",
