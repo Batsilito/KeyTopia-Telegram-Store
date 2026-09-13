@@ -40,6 +40,7 @@ export const orderStatusEnum = pgEnum("order_status", [
   "cancelled",
 ]);
 export const paymentMethodEnum = pgEnum("payment_method", [
+  "wallet",
   "binance",
   "bybit",
   "vodafone_cash",

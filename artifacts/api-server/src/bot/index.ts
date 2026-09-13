@@ -72,8 +72,10 @@ function languageKeyboard() {
     .text("🇸🇦 العربية", "language:ar");
 }
 
-function paymentMethodLabel(method: string) {
+function paymentMethodLabel(method: string, language?: BotLanguage) {
+  if (method === "wallet" && language) return t(language, "payWithWallet");
   const labels: Record<string, string> = {
+    wallet: "💳 PAY WITH WALLET",
     binance: "🟡 BINANCE",
     bybit: "🔷 BYBIT",
     vodafone_cash: "📱 VODAFONE CASH",
@@ -814,6 +816,10 @@ export async function issueReferralRewardForOrder(order: ReferralRewardOrder) {
 
 function paymentMethodDescription(method: string, language: BotLanguage) {
   const descriptions: Record<string, { en: string; ar: string }> = {
+    wallet: {
+      en: t("en", "walletPaymentDescription"),
+      ar: t("ar", "walletPaymentDescription"),
+    },
     binance: {
       en: "Send from your Binance UID to the recipient UID shown in the instructions. Your transfer is checked automatically.",
       ar: "أرسل إلى رقم Binance UID الموضح في التعليمات. سيتم التحقق من التحويل تلقائياً.",
@@ -833,6 +839,8 @@ function paymentMethodDescription(method: string, language: BotLanguage) {
   };
   return descriptions[method]?.[language] ?? "";
 }
+
+type CheckoutPaymentMethod = "wallet" | "binance" | "bybit" | "vodafone_cash" | "instapay";
 
 const supportDraftUsers = new Set<string>();
 const supportReplyDrafts = new Map<string, string>();
@@ -1667,16 +1675,20 @@ async function beginCheckout(ctx: Context, user: typeof users.$inferSelect, prod
   const methods = await db.select().from(paymentMethods).where(eq(paymentMethods.enabled, true));
   const language = languageOf(user);
   const keyboard = new InlineKeyboard();
+  keyboard
+    .text(paymentMethodLabel("wallet", language), `method:${checkout[0].id}:wallet`)
+    .row();
   for (const method of methods) {
-    keyboard.text(paymentMethodLabel(method.method), `method:${checkout[0].id}:${method.method}`).row();
+    keyboard.text(paymentMethodLabel(method.method, language), `method:${checkout[0].id}:${method.method}`).row();
   }
   keyboard
     .text(t(language, "cancelOrder"), `checkout:cancel:${checkout[0].id}`)
     .text(t(language, "support"), "nav:support");
   const productName = language === "ar" ? product.nameAr : product.nameEn;
-  const methodLines = methods.length
-    ? methods.map((method) => `• <b>${escapeHtml(paymentMethodLabel(method.method))}</b> ${escapeHtml(paymentMethodDescription(method.method, language))}`)
-    : [`• ${t(language, "paymentUnavailable")}`];
+  const methodLines = [
+    `• <b>${escapeHtml(paymentMethodLabel("wallet", language))}</b> ${escapeHtml(paymentMethodDescription("wallet", language))}`,
+    ...methods.map((method) => `• <b>${escapeHtml(paymentMethodLabel(method.method, language))}</b> ${escapeHtml(paymentMethodDescription(method.method, language))}`),
+  ];
   const summary = [
     `<b>${t(language, "orderCreated")}</b>`,
     "",
@@ -1727,9 +1739,156 @@ async function cancelCheckout(ctx: Context, user: typeof users.$inferSelect, che
   );
 }
 
-async function showPayment(ctx: Context, user: typeof users.$inferSelect, checkoutId: string, method: "binance" | "bybit" | "vodafone_cash" | "instapay") {
+async function payCheckoutWithWallet(
+  ctx: Context,
+  user: typeof users.$inferSelect,
+  checkoutId: string,
+) {
+  const result = await db.transaction(async (tx) => {
+    // Serialize wallet purchases for this customer so two Telegram taps cannot
+    // spend the same available balance.
+    await tx
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.id, user.id))
+      .for("update");
+
+    const rows = await tx
+      .select({
+        checkout: checkoutSessions,
+        deliveryType: products.deliveryType,
+        stockType: products.stockType,
+      })
+      .from(checkoutSessions)
+      .innerJoin(products, eq(checkoutSessions.productId, products.id))
+      .where(
+        and(
+          eq(checkoutSessions.id, checkoutId),
+          eq(checkoutSessions.userId, user.id),
+          eq(checkoutSessions.status, "pending"),
+          gt(checkoutSessions.expiresAt, new Date()),
+        ),
+      )
+      .limit(1);
+    const checkout = rows[0];
+    if (!checkout) return { status: "unavailable" as const };
+
+    const balanceRows = await tx
+      .select({ balance: sum(walletTransactions.amountUsd) })
+      .from(walletTransactions)
+      .where(eq(walletTransactions.userId, user.id));
+    const balance = Number(balanceRows[0]?.balance ?? 0);
+    const amount = Number(checkout.checkout.priceUsd);
+    if (!Number.isFinite(amount) || balance < amount) {
+      return {
+        status: "insufficient" as const,
+        balance: balance.toFixed(2),
+        amount: amount.toFixed(2),
+      };
+    }
+
+    const now = new Date();
+    const claimed = await tx
+      .update(checkoutSessions)
+      .set({
+        paymentMethod: "wallet",
+        status: "confirmed",
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(checkoutSessions.id, checkoutId),
+          eq(checkoutSessions.userId, user.id),
+          eq(checkoutSessions.status, "pending"),
+          gt(checkoutSessions.expiresAt, now),
+        ),
+      )
+      .returning({ id: checkoutSessions.id });
+    if (!claimed[0]) return { status: "unavailable" as const };
+
+    const orderRows = await tx
+      .insert(orders)
+      .values({
+        orderNumber: checkout.checkout.reference,
+        userId: user.id,
+        productId: checkout.checkout.productId,
+        checkoutSessionId: checkout.checkout.id,
+        productNameSnapshot: checkout.checkout.productNameSnapshot,
+        durationSnapshot: checkout.checkout.durationSnapshot,
+        warrantySnapshot: checkout.checkout.warrantySnapshot,
+        quantity: checkout.checkout.quantity,
+        priceUsd: checkout.checkout.priceUsd,
+        egpAmount: null,
+        exchangeRate: null,
+        paymentMethod: "wallet",
+        status: "paid",
+        deliveryType: checkout.deliveryType,
+        stockTypeSnapshot: checkout.stockType,
+      })
+      .returning();
+    const order = orderRows[0];
+    if (!order) throw new Error("Unable to create wallet-paid order");
+
+    await tx.insert(payments).values({
+      checkoutSessionId: checkout.checkout.id,
+      orderId: order.id,
+      userId: user.id,
+      paymentMethod: "wallet",
+      usdAmount: checkout.checkout.priceUsd,
+      transactionReference: `wallet:${order.orderNumber}`,
+      status: "confirmed",
+      submittedAt: now,
+    });
+    await tx.insert(walletTransactions).values({
+      userId: user.id,
+      orderId: order.id,
+      type: "purchase_adjustment",
+      amountUsd: (-amount).toFixed(2),
+      reason: `Wallet payment for order ${order.orderNumber}`,
+      reference: order.orderNumber,
+    });
+
+    return { status: "confirmed" as const, orderId: order.id };
+  });
+
+  const language = languageOf(user);
+  if (result.status === "insufficient") {
+    await ctx.reply(
+      t(language, "walletInsufficientBalance")
+        .replace("{balance}", result.balance)
+        .replace("{amount}", result.amount),
+      { reply_markup: customerKeyboard(language) },
+    );
+    return true;
+  }
+  if (result.status === "unavailable") {
+    await ctx.reply(t(language, "walletPaymentAlreadyProcessed"), {
+      reply_markup: customerKeyboard(language),
+    });
+    return true;
+  }
+
+  const notified = await notifyOrderConfirmed(result.orderId);
+  if (!notified) {
+    await ctx.reply(t(language, "walletPaymentConfirmed"), {
+      reply_markup: customerKeyboard(language),
+    });
+  }
+  return true;
+}
+
+async function showPayment(
+  ctx: Context,
+  user: typeof users.$inferSelect,
+  checkoutId: string,
+  method: CheckoutPaymentMethod,
+) {
   const checkout = await db.select().from(checkoutSessions).where(and(eq(checkoutSessions.id, checkoutId), eq(checkoutSessions.userId, user.id), gt(checkoutSessions.expiresAt, new Date()))).limit(1);
   if (!checkout[0]) return;
+  if (method === "wallet") {
+    await payCheckoutWithWallet(ctx, user, checkoutId);
+    return;
+  }
   await db.update(checkoutSessions).set({ paymentMethod: method }).where(eq(checkoutSessions.id, checkoutId));
   const config = await db.select().from(paymentMethods).where(and(eq(paymentMethods.method, method), eq(paymentMethods.enabled, true))).limit(1);
   const language = languageOf(user);
