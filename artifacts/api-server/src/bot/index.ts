@@ -67,7 +67,14 @@ function startVerificationAnimation(
   const previous = verificationAnimationTimers.get(key);
   if (previous) clearInterval(previous);
   let frame = 0;
+  let ticks = 0;
   const timer = setInterval(() => {
+    ticks += 1;
+    if (ticks >= 60) {
+      clearInterval(timer);
+      verificationAnimationTimers.delete(key);
+      return;
+    }
     frame = (frame + 1) % 4;
     void telegramBot.api
       .editMessageText(
@@ -81,6 +88,41 @@ function startVerificationAnimation(
   }, 700);
   timer.unref();
   verificationAnimationTimers.set(key, timer);
+}
+
+async function showVerificationLoading(
+  ctx: Context,
+  user: typeof users.$inferSelect,
+  eventKey: string,
+  payload: Record<string, unknown>,
+) {
+  const language = languageOf(user);
+  let verificationMessageId: number | undefined;
+  try {
+    const message = await ctx.reply(
+      t(language, "paymentVerificationLoading").replace("{dots}", ""),
+      { reply_markup: customerKeyboard(language) },
+    );
+    verificationMessageId = message.message_id;
+    startVerificationAnimation(user.telegramUserId, verificationMessageId, language);
+  } catch (error) {
+    logger.warn({ err: error, eventKey }, "Unable to send Binance verification loading message");
+  }
+  try {
+    await upsertTelegramPaymentNotification(db, {
+      eventKey,
+      telegramUserId: user.telegramUserId,
+      language,
+      eventType: "verification_pending",
+      payload: {
+        ...payload,
+        verificationMessageId,
+      },
+    });
+  } catch (error) {
+    await dismissVerificationMessage(user.telegramUserId, verificationMessageId);
+    throw error;
+  }
 }
 
 async function dismissVerificationMessage(
@@ -549,7 +591,7 @@ export function processBinancePayments() {
           await notifyAdminBinanceVerificationFailure(payment);
         } else if (payment.kind === "order") {
           await clearPaymentVerificationMessage(
-            `product-payment:${payment.orderId}:verification`,
+            `product-payment:${payment.paymentId}:verification`,
           );
           await notifyOrderConfirmed(payment.orderId);
         }
@@ -1246,9 +1288,16 @@ async function acceptWalletTopUpTransactionId(
         )
         .returning({ id: walletTopUps.id });
       if (retried[0]) {
-        await ctx.reply(t(languageOf(user), "topUpPending"), {
-          reply_markup: customerKeyboard(languageOf(user)),
-        });
+        await showVerificationLoading(
+          ctx,
+          user,
+          `wallet-top-up:${existing[0].id}:verification`,
+          {
+            paymentKind: "wallet",
+            amountUsd: existing[0].amountUsd,
+            transactionId: submittedTransactionId,
+          },
+        );
         scheduleBinancePaymentProcessing();
         return true;
       }
@@ -1294,9 +1343,16 @@ async function acceptWalletTopUpTransactionId(
     await ctx.reply(t(languageOf(user), "error"));
     return true;
   }
-  await ctx.reply(t(languageOf(user), "topUpPending"), {
-    reply_markup: customerKeyboard(languageOf(user)),
-  });
+  await showVerificationLoading(
+    ctx,
+    user,
+    `wallet-top-up:${topUp.id}:verification`,
+    {
+      paymentKind: "wallet",
+      amountUsd: draft.amount.toFixed(2),
+      transactionId: submittedTransactionId,
+    },
+  );
   scheduleBinancePaymentProcessing();
   return true;
 }
@@ -2112,24 +2168,40 @@ async function acceptPaymentReference(ctx: Context, user: typeof users.$inferSel
       .where(and(eq(checkoutSessions.id, checkout[0].id), eq(checkoutSessions.status, "pending"), gt(checkoutSessions.expiresAt, new Date())))
       .returning({ id: checkoutSessions.id });
     if (!claimed[0]) return false;
-    await tx.insert(payments).values({
-      checkoutSessionId: checkout[0].id,
-      userId: user.id,
-      paymentMethod: checkout[0].paymentMethod!,
-      usdAmount: checkout[0].priceUsd,
-      transactionReference: submittedReference,
-      status: "submitted",
-      submittedAt: new Date(),
-    });
-    return true;
+    const created = await tx
+      .insert(payments)
+      .values({
+        checkoutSessionId: checkout[0].id,
+        userId: user.id,
+        paymentMethod: checkout[0].paymentMethod!,
+        usdAmount: checkout[0].priceUsd,
+        transactionReference: submittedReference,
+        status: "submitted",
+        submittedAt: new Date(),
+      })
+      .returning({ id: payments.id });
+    return created[0];
   });
   if (!submitted) {
     await ctx.reply(t(languageOf(user), "error"));
     return true;
   }
-  await ctx.reply(t(languageOf(user), "paymentSubmitted"), { reply_markup: customerKeyboard(languageOf(user)) });
   if (checkout[0].paymentMethod === "binance") {
+    await showVerificationLoading(
+      ctx,
+      user,
+      `product-payment:${submitted.id}:verification`,
+      {
+        paymentKind: "order",
+        amountUsd: checkout[0].priceUsd,
+        transactionId: submittedReference,
+      },
+    );
     scheduleBinancePaymentProcessing();
+  } else {
+    await ctx.reply(t(languageOf(user), "paymentSubmitted"), {
+      reply_markup: customerKeyboard(languageOf(user)),
+    });
   }
   return true;
 }

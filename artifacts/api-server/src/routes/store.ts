@@ -65,6 +65,7 @@ import {
 import {
   broadcastNewProduct,
   broadcastProductRestocked,
+  clearPaymentVerificationMessage,
   issueReferralRewardForOrder,
   notifyOrderConfirmed,
   notifyOrderDelivered,
@@ -75,6 +76,7 @@ import {
 import {
   manuallyConfirmWalletTopUp,
   testBinanceApiConnectivity,
+  upsertTelegramPaymentNotification,
 } from "../lib/binance-topups";
 
 const router: IRouter = Router();
@@ -857,6 +859,9 @@ router.post("/payments/:paymentId/confirm", async (req, res) => {
   }
   if (!result) return res.status(409).json({ error: "Payment is already processed or missing" });
   if (result.newlyConfirmed) {
+    await clearPaymentVerificationMessage(
+      `product-payment:${result.payment.id}:verification`,
+    );
     await notifyOrderConfirmed(result.order.id);
   }
   const items = await listPaymentRows(1, { page: 1, pageSize: 1 });
@@ -913,23 +918,20 @@ router.post("/payments/:paymentId/reject", async (req, res) => {
       .limit(1);
     if (customer[0]) {
       const isProduct = Boolean(payment);
-      await tx
-        .insert(telegramPaymentNotifications)
-        .values({
-          eventKey: `${isProduct ? "product-payment" : "wallet-top-up"}:${decision.id}:declined`,
-          telegramUserId: customer[0].telegramUserId,
-          language: customer[0].language,
-          eventType: "payment_declined",
-          payload: {
-            paymentKind: isProduct ? "product payment" : "wallet top-up",
-            amountUsd: isProduct ? payment!.usdAmount : topUp!.amountUsd,
-            transactionId: isProduct
-              ? payment!.transactionReference ?? "Not provided"
-              : topUp!.submittedTransactionId,
-            reason: parsed.data.reason,
-          },
-        })
-        .onConflictDoNothing();
+      await upsertTelegramPaymentNotification(tx, {
+        eventKey: `${isProduct ? "product-payment" : "wallet-top-up"}:${decision.id}:verification`,
+        telegramUserId: customer[0].telegramUserId,
+        language: customer[0].language,
+        eventType: "payment_declined",
+        payload: {
+          paymentKind: isProduct ? "product payment" : "wallet top-up",
+          amountUsd: isProduct ? payment!.usdAmount : topUp!.amountUsd,
+          transactionId: isProduct
+            ? payment!.transactionReference ?? "Not provided"
+            : topUp!.submittedTransactionId,
+          reason: parsed.data.reason,
+        },
+      });
     }
     return { id: decision.id };
   });

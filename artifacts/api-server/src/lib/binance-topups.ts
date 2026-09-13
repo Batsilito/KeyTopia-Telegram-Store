@@ -102,6 +102,7 @@ export type ConfirmedBinanceWalletTopUp = CustomerNotification & {
 
 export type ConfirmedBinanceOrderPayment = CustomerNotification & {
   kind: "order";
+  paymentId: string;
   amountUsd: string;
   transactionId: string;
   orderNumber: string;
@@ -346,7 +347,7 @@ async function confirmWalletTopUp(
       .limit(1);
     if (customer[0]) {
       await upsertTelegramPaymentNotification(tx, {
-        eventKey: `wallet-top-up:${topUp.id}:confirmed`,
+        eventKey: `wallet-top-up:${topUp.id}:verification`,
         telegramUserId: customer[0].telegramUserId,
         language: customer[0].language,
         eventType: "wallet_top_up_confirmed",
@@ -433,7 +434,7 @@ export async function manuallyConfirmWalletTopUp(
       .limit(1);
     if (customer[0]) {
       await upsertTelegramPaymentNotification(tx, {
-        eventKey: `wallet-top-up:${topUp.id}:confirmed`,
+        eventKey: `wallet-top-up:${topUp.id}:verification`,
         telegramUserId: customer[0].telegramUserId,
         language: customer[0].language,
         eventType: "wallet_top_up_confirmed",
@@ -581,7 +582,7 @@ async function failWalletTopUp(
       .limit(1);
     if (!customer[0]) return null;
     await upsertTelegramPaymentNotification(tx, {
-      eventKey: `wallet-top-up:${topUp.id}:verification-failed`,
+      eventKey: `wallet-top-up:${topUp.id}:verification`,
       telegramUserId: customer[0].telegramUserId,
       language: customer[0].language,
       eventType: "verification_failed",
@@ -631,7 +632,7 @@ async function failProductPayment(
       .limit(1);
     if (!customer[0]) return null;
     await upsertTelegramPaymentNotification(tx, {
-      eventKey: `product-payment:${payment.id}:verification-failed`,
+      eventKey: `product-payment:${payment.id}:verification`,
       telegramUserId: customer[0].telegramUserId,
       language: customer[0].language,
       eventType: "verification_failed",
@@ -804,6 +805,7 @@ export async function pollBinancePayments(): Promise<BinancePaymentProcessingRes
           usedTransactionIds.add(candidate.transactionId);
           processed.push({
             kind: "order",
+            paymentId: candidate.record.id,
             telegramUserId: result.telegramUserId,
             language: result.language,
             amountUsd: candidate.amountUsd,
@@ -878,6 +880,7 @@ export async function pollBinancePayments(): Promise<BinancePaymentProcessingRes
         usedTransactionIds.add(match);
         processed.push({
           kind: "order",
+          paymentId: candidate.record.id,
           telegramUserId: result.telegramUserId,
           language: result.language,
           amountUsd: candidate.amountUsd,
