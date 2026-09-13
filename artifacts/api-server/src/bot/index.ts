@@ -36,6 +36,8 @@ export const telegramBotToken = process.env.TELEGRAM_BOT_TOKEN;
 export const telegramBot = telegramBotToken ? new Bot(telegramBotToken) : null;
 let binanceProcessingPromise: Promise<void> | null = null;
 let schedulerStarted = false;
+const BINANCE_POLL_INTERVAL_MS = 5_000;
+const BINANCE_SUBMISSION_RETRY_DELAYS_MS = [250, 1_000, 2_500, 5_000, 10_000, 20_000] as const;
 
 function languageOf(user: typeof users.$inferSelect): BotLanguage {
   return user.language;
@@ -517,11 +519,13 @@ export function processBinancePayments() {
 }
 
 function scheduleBinancePaymentProcessing() {
-  setTimeout(() => {
-    void processBinancePayments().catch((error) => {
-      logger.error({ err: error }, "Deferred Binance payment check failed");
-    });
-  }, 250);
+  for (const delay of BINANCE_SUBMISSION_RETRY_DELAYS_MS) {
+    setTimeout(() => {
+      void processBinancePayments().catch((error) => {
+        logger.error({ err: error }, "Deferred Binance payment check failed");
+      });
+    }, delay);
+  }
 }
 
 async function recoverOrderNotifications() {
@@ -553,20 +557,27 @@ async function recoverOrderNotifications() {
 export function startStoreNotificationScheduler() {
   if (!telegramBot || schedulerStarted) return;
   schedulerStarted = true;
-  const run = async () => {
+  const runMaintenance = async () => {
     await releaseExpiredCheckouts();
     await notifyDueFlashSales();
     await recoverOrderNotifications();
-    await processBinancePayments();
   };
-  const runSafely = () => {
-    void run().catch((error) => {
+  const runMaintenanceSafely = () => {
+    void runMaintenance().catch((error) => {
       logger.error({ err: error }, "Store notification or Binance top-up job failed");
     });
   };
-  runSafely();
-  const interval = setInterval(runSafely, 30_000);
-  interval.unref();
+  const runBinanceSafely = () => {
+    void processBinancePayments().catch((error) => {
+      logger.error({ err: error }, "Scheduled Binance payment check failed");
+    });
+  };
+  runMaintenanceSafely();
+  runBinanceSafely();
+  const maintenanceInterval = setInterval(runMaintenanceSafely, 30_000);
+  const binanceInterval = setInterval(runBinanceSafely, BINANCE_POLL_INTERVAL_MS);
+  maintenanceInterval.unref();
+  binanceInterval.unref();
 }
 
 type ReferralRewardOrder = Pick<
