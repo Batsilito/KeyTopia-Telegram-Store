@@ -947,25 +947,15 @@ async function notifyVerifiedReferralReward(
   reward: {
     amount: string;
     referredName: string;
-    telegramUserId: string;
-    language: BotLanguage;
   },
 ) {
-  if (!telegramBot) return;
-  const message = t(reward.language, "referralRewardVerified")
-    .replace("{name}", escapeHtml(reward.referredName))
-    .replace("{amount}", Number(reward.amount).toFixed(2));
-  try {
-    await telegramBot.api.sendMessage(reward.telegramUserId, message, {
-      parse_mode: "HTML",
-      reply_markup: customerKeyboard(reward.language),
-    });
-  } catch (error) {
-    logger.warn(
-      { err: error, telegramUserId: reward.telegramUserId },
-      "Unable to send verified referral reward notification",
-    );
-  }
+  await broadcastToCustomers(
+    (language) =>
+      t(language, "referralRewardVerified")
+        .replace("{name}", escapeHtml(reward.referredName))
+        .replace("{amount}", Number(reward.amount).toFixed(2)),
+    customerKeyboard,
+  );
 }
 
 function paymentMethodDescription(method: string, language: BotLanguage) {
@@ -1053,8 +1043,6 @@ async function applyReferralCode(user: CustomerUser, rawCode: string | undefined
     const referrerRows = await tx
       .select({
         id: users.id,
-        telegramUserId: users.telegramUserId,
-        language: users.language,
       })
       .from(users)
       .where(eq(users.referralCode, code))
@@ -1097,8 +1085,6 @@ async function applyReferralCode(user: CustomerUser, rawCode: string | undefined
           [user.firstName, user.lastName].filter(Boolean).join(" ").trim() ||
           user.username ||
           "Customer",
-        telegramUserId: referrer.telegramUserId,
-        language: referrer.language,
       },
     };
   });
