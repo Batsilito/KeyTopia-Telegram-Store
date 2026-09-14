@@ -970,6 +970,7 @@ type CheckoutPaymentMethod = "wallet" | "binance" | "bybit" | "vodafone_cash" | 
 const supportDraftUsers = new Set<string>();
 const supportReplyDrafts = new Map<string, string>();
 const walletTopUpDrafts = new Map<string, { method: "binance"; amount?: number }>();
+const customQuantityProducts = new Map<string, string>();
 
 function createSupportTicketNumber() {
   return `KT-${Date.now().toString(36).toUpperCase()}-${randomBytes(3).toString("hex").toUpperCase()}`;
@@ -1785,17 +1786,18 @@ async function showQuantitySelector(ctx: Context, user: typeof users.$inferSelec
   const total = (Number(product.priceUsd) * quantity).toFixed(2);
   const language = languageOf(user);
   const name = language === "ar" ? product.nameAr : product.nameEn;
-  const keyboard = new InlineKeyboard()
-    .text("−", `quantity:${product.id}:minus:${quantity}`)
-    .text(String(quantity), "quantity:noop")
-    .text("+", `quantity:${product.id}:plus:${quantity}`)
+  const keyboard = new InlineKeyboard();
+  for (const preset of [1, 2, 3]) {
+    if (preset > maxQuantity) break;
+    keyboard.text(String(preset), `quantity:${product.id}:set:${preset}`).success();
+  }
+  keyboard
     .row()
-    .text("1", `quantity:${product.id}:set:1`)
-    .text(`${t(language, "max")} ${maxQuantity}`, `quantity:${product.id}:set:${maxQuantity}`)
+    .text(t(language, "customQuantity"), `quantity:${product.id}:custom`)
+    .primary()
     .row()
-    .text(`${t(language, "confirm")} ${quantity} · ${total} USDT`, `quantity:${product.id}:confirm:${quantity}`)
-    .row()
-    .text(t(language, "back"), `quantity:${product.id}:back`);
+    .text(t(language, "back"), `quantity:${product.id}:back`)
+    .row();
   const text = [
     `<b>${t(language, "selectQuantity")}</b>`,
     "",
@@ -1809,6 +1811,43 @@ async function showQuantitySelector(ctx: Context, user: typeof users.$inferSelec
     `<i>${t(language, "quantityCheckNotice")}</i>`,
   ].join("\n");
   await replaceCallbackMessage(ctx, text, { parse_mode: "HTML", reply_markup: keyboard });
+}
+
+async function acceptCustomQuantity(
+  ctx: Context,
+  user: typeof users.$inferSelect,
+  value: string,
+) {
+  const productId = customQuantityProducts.get(user.id);
+  if (!productId) return false;
+  const language = languageOf(user);
+  const parsed = Number(value.trim());
+  if (!/^\d+$/.test(value.trim()) || !Number.isSafeInteger(parsed) || parsed < 1) {
+    await ctx.reply(t(language, "invalidCustomQuantity"));
+    return true;
+  }
+  const rows = await db
+    .select()
+    .from(products)
+    .where(and(eq(products.id, productId), eq(products.active, true)))
+    .limit(1);
+  const product = rows[0];
+  if (!product) {
+    customQuantityProducts.delete(user.id);
+    await ctx.reply(t(language, "outOfStock"));
+    return true;
+  }
+  const availability = await getProductAvailability(product);
+  const maxQuantity = product.stockType === "unlimited" ? 99 : Number(availability.quantity);
+  if (parsed > maxQuantity) {
+    await ctx.reply(
+      t(language, "invalidCustomQuantity").replace("{max}", String(maxQuantity)),
+    );
+    return true;
+  }
+  customQuantityProducts.delete(user.id);
+  await beginCheckout(ctx, user, productId, parsed);
+  return true;
 }
 
 async function beginCheckout(ctx: Context, user: typeof users.$inferSelect, productId: string, requestedQuantity = 1) {
@@ -2351,7 +2390,18 @@ export function buildTelegramBot() {
       const [, productId, action, rawQuantity] = data.split(":");
       const currentQuantity = Number(rawQuantity || 1);
       if (action === "back") {
+        customQuantityProducts.delete(user.id);
         await showProduct(ctx, user, productId);
+        return;
+      }
+      if (action === "custom") {
+        customQuantityProducts.set(user.id, productId);
+        await replaceCallbackMessage(ctx, t(languageOf(user), "enterCustomQuantity"), {
+          reply_markup: new InlineKeyboard().text(
+            t(languageOf(user), "back"),
+            `quantity:${productId}:back`,
+          ),
+        });
         return;
       }
       if (action === "confirm") {
@@ -2411,6 +2461,7 @@ export function buildTelegramBot() {
   bot.on("message:text", async (ctx) => {
     const user = await findOrCreateCustomer(ctx);
     if (!user) return;
+    if (await acceptCustomQuantity(ctx, user, ctx.message.text)) return;
     if (await acceptSupportReply(ctx, user, ctx.message.text)) return;
     if (await acceptSupportMessage(ctx, user, ctx.message.text)) return;
     if (await acceptWalletTopUpTransactionId(ctx, user, ctx.message.text)) return;
