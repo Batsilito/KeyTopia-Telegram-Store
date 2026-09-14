@@ -1695,8 +1695,6 @@ async function showShop(ctx: Context, user: typeof users.$inferSelect, editMessa
     .text(t(language, "orderHistory"), "nav:orders")
     .text(t(language, "wallet"), "nav:wallet")
     .row()
-    .text(t(language, "checkoutNotice"), "nav:checkout")
-    .row()
     .text(t(language, "mainMenu"), "nav:home");
 
   const text = "\u2060";
@@ -2341,7 +2339,7 @@ export function buildTelegramBot() {
       await showShop(ctx, user, true);
       return;
     }
-    if (data === "nav:checkout" || data === "nav:channel") {
+    if (data === "nav:channel") {
       await ctx.reply(t(languageOf(user), "comingSoon"));
       return;
     }
