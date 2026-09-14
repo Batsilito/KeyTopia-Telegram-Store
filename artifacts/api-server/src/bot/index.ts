@@ -946,12 +946,14 @@ type CustomerUser = typeof users.$inferSelect & { joinedNow: boolean };
 async function notifyVerifiedReferralReward(
   reward: {
     amount: string;
+    referredName: string;
     telegramUserId: string;
     language: BotLanguage;
   },
 ) {
   if (!telegramBot) return;
   const message = t(reward.language, "referralRewardVerified")
+    .replace("{name}", escapeHtml(reward.referredName))
     .replace("{amount}", Number(reward.amount).toFixed(2));
   try {
     await telegramBot.api.sendMessage(reward.telegramUserId, message, {
@@ -1091,6 +1093,10 @@ async function applyReferralCode(user: CustomerUser, rawCode: string | undefined
       user: { ...user, referredById: referrer.id },
       reward: {
         amount: VERIFIED_REFERRAL_REWARD_USD,
+        referredName:
+          [user.firstName, user.lastName].filter(Boolean).join(" ").trim() ||
+          user.username ||
+          "Customer",
         telegramUserId: referrer.telegramUserId,
         language: referrer.language,
       },
