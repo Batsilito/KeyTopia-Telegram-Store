@@ -1,3 +1,5 @@
+export const VERIFIED_REFERRAL_REWARD_USD = "0.10";
+
 function parseScaledDecimal(value: string | number, scale: number): bigint | null {
   const normalized = String(value).trim();
   if (!/^\d+(?:\.\d+)?$/.test(normalized)) return null;

@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { calculatePercentageAmount, rewardsAreEligible } from "./reward-policy.ts";
+import {
+  calculatePercentageAmount,
+  rewardsAreEligible,
+  VERIFIED_REFERRAL_REWARD_USD,
+} from "./reward-policy.ts";
+
+test("verified referrals receive the fixed reward", () => {
+  assert.equal(VERIFIED_REFERRAL_REWARD_USD, "0.10");
+});
 
 test("only delivered orders qualify for rewards", () => {
   assert.equal(rewardsAreEligible("paid"), false);

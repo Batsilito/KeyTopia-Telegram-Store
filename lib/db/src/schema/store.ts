@@ -480,7 +480,7 @@ export const storeSettings = pgTable("store_settings", {
   storeName: text("store_name").default("KeyTopia").notNull(),
   requiredTelegramChannel: text("required_telegram_channel"),
   cashbackPercent: numeric("cashback_percent", { precision: 5, scale: 2 }).default("0").notNull(),
-  referralRewardUsd: numeric("referral_reward_usd", { precision: 12, scale: 2 }).default("0").notNull(),
+  referralRewardUsd: numeric("referral_reward_usd", { precision: 12, scale: 2 }).default("0.10").notNull(),
   usdToEgpRate: numeric("usd_to_egp_rate", { precision: 12, scale: 4 }).default("50").notNull(),
   paymentRounding: roundingEnum("payment_rounding").default("nearest_egp").notNull(),
   checkoutTimeoutMinutes: integer("checkout_timeout_minutes").default(5).notNull(),

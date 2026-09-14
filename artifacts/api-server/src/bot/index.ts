@@ -31,7 +31,11 @@ import {
 } from "../lib/binance-topups";
 import { createBinanceFailureNotificationPlan } from "../lib/binance-verification";
 import { fulfillAutomaticOrder } from "../lib/order-fulfillment";
-import { calculatePercentageAmount, rewardsAreEligible } from "../lib/reward-policy";
+import {
+  calculatePercentageAmount,
+  rewardsAreEligible,
+  VERIFIED_REFERRAL_REWARD_USD,
+} from "../lib/reward-policy";
 import { t, type BotLanguage } from "./locales";
 
 export const telegramBotToken = process.env.TELEGRAM_BOT_TOKEN;
@@ -828,7 +832,6 @@ export async function issueReferralRewardForOrder(order: ReferralRewardOrder) {
 
     const settings = await tx
       .select({
-        reward: storeSettings.referralRewardUsd,
         cashbackPercent: storeSettings.cashbackPercent,
       })
       .from(storeSettings)
@@ -878,8 +881,7 @@ export async function issueReferralRewardForOrder(order: ReferralRewardOrder) {
     const candidate = candidates[0];
     if (!candidate) return null;
 
-    const reward = settings[0]?.reward ?? "0";
-    if (Number(reward) <= 0) return null;
+    const reward = VERIFIED_REFERRAL_REWARD_USD;
     const updated = await tx
       .update(referrals)
       .set({
@@ -939,6 +941,31 @@ export async function issueReferralRewardForOrder(order: ReferralRewardOrder) {
   return issuedReward;
 }
 
+type CustomerUser = typeof users.$inferSelect & { joinedNow: boolean };
+
+async function notifyVerifiedReferralReward(
+  reward: {
+    amount: string;
+    telegramUserId: string;
+    language: BotLanguage;
+  },
+) {
+  if (!telegramBot) return;
+  const message = t(reward.language, "referralRewardVerified")
+    .replace("{amount}", Number(reward.amount).toFixed(2));
+  try {
+    await telegramBot.api.sendMessage(reward.telegramUserId, message, {
+      parse_mode: "HTML",
+      reply_markup: customerKeyboard(reward.language),
+    });
+  } catch (error) {
+    logger.warn(
+      { err: error, telegramUserId: reward.telegramUserId },
+      "Unable to send verified referral reward notification",
+    );
+  }
+}
+
 function paymentMethodDescription(method: string, language: BotLanguage) {
   const descriptions: Record<string, { en: string; ar: string }> = {
     wallet: {
@@ -976,7 +1003,7 @@ function createSupportTicketNumber() {
   return `KT-${Date.now().toString(36).toUpperCase()}-${randomBytes(3).toString("hex").toUpperCase()}`;
 }
 
-async function findOrCreateCustomer(ctx: Context) {
+async function findOrCreateCustomer(ctx: Context): Promise<CustomerUser | null> {
   const from = ctx.from;
   if (!from) return null;
   const existing = await db
@@ -1000,6 +1027,7 @@ async function findOrCreateCustomer(ctx: Context) {
       username: from.username ?? null,
       firstName: from.first_name,
       lastName: from.last_name ?? null,
+      joinedNow: false,
     };
   }
   const referralCode = `KT${from.id.toString(36).toUpperCase()}`;
@@ -1013,19 +1041,64 @@ async function findOrCreateCustomer(ctx: Context) {
       referralCode,
     })
     .returning();
-  return created[0];
+  return created[0] ? { ...created[0], joinedNow: true } : null;
 }
 
-async function applyReferralCode(user: typeof users.$inferSelect, rawCode: string | undefined) {
+async function applyReferralCode(user: CustomerUser, rawCode: string | undefined) {
   const code = rawCode?.trim();
-  if (!code || code === user.referralCode || user.referredById) return user;
-  const referrer = await db.select().from(users).where(eq(users.referralCode, code)).limit(1);
-  if (!referrer[0] || referrer[0].id === user.id) return user;
-  await db.transaction(async (tx) => {
-    await tx.update(users).set({ referredById: referrer[0].id, updatedAt: new Date() }).where(eq(users.id, user.id));
-    await tx.insert(referrals).values({ referrerId: referrer[0].id, referredUserId: user.id });
+  if (!user.joinedNow || !code || code === user.referralCode || user.referredById) return user;
+  const result = await db.transaction(async (tx) => {
+    const referrerRows = await tx
+      .select({
+        id: users.id,
+        telegramUserId: users.telegramUserId,
+        language: users.language,
+      })
+      .from(users)
+      .where(eq(users.referralCode, code))
+      .limit(1);
+    const referrer = referrerRows[0];
+    if (!referrer || referrer.id === user.id) return null;
+
+    const updatedUser = await tx
+      .update(users)
+      .set({ referredById: referrer.id, updatedAt: new Date() })
+      .where(and(eq(users.id, user.id), isNull(users.referredById)))
+      .returning({ id: users.id });
+    if (!updatedUser[0]) return null;
+
+    const referralRows = await tx
+      .insert(referrals)
+      .values({
+        referrerId: referrer.id,
+        referredUserId: user.id,
+        rewardIssued: true,
+      })
+      .returning({ id: referrals.id });
+    if (!referralRows[0]) return null;
+
+    const transactionId = randomUUID();
+    await tx.insert(walletTransactions).values({
+      id: transactionId,
+      userId: referrer.id,
+      type: "referral_reward",
+      amountUsd: VERIFIED_REFERRAL_REWARD_USD,
+      reason: "Reward for a verified new referral",
+      reference: `referral:${referralRows[0].id}`,
+    });
+
+    return {
+      user: { ...user, referredById: referrer.id },
+      reward: {
+        amount: VERIFIED_REFERRAL_REWARD_USD,
+        telegramUserId: referrer.telegramUserId,
+        language: referrer.language,
+      },
+    };
   });
-  return { ...user, referredById: referrer[0].id };
+  if (!result) return user;
+  await notifyVerifiedReferralReward(result.reward);
+  return result.user;
 }
 
 async function channelConfigured() {
@@ -1466,11 +1539,10 @@ async function showSupportTicket(ctx: Context, user: typeof users.$inferSelect, 
 async function showReferral(ctx: Context, user: typeof users.$inferSelect) {
   if (!(await ensureAccess(ctx, user))) return;
   const language = languageOf(user);
-  const [referralCount, settings] = await Promise.all([
+  const [referralCount] = await Promise.all([
     db.select({ total: count() }).from(referrals).where(eq(referrals.referrerId, user.id)),
-    db.select({ reward: storeSettings.referralRewardUsd }).from(storeSettings).limit(1),
   ]);
-  const reward = Number(settings[0]?.reward ?? 0).toFixed(2);
+  const reward = Number(VERIFIED_REFERRAL_REWARD_USD).toFixed(2);
   const inviteLink = `https://t.me/KeyTopiaStore_bot?start=${encodeURIComponent(user.referralCode)}`;
   const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(inviteLink)}&text=${encodeURIComponent(t(language, "referralIntro"))}`;
   const text = [
