@@ -1029,14 +1029,17 @@ async function applyReferralCode(user: typeof users.$inferSelect, rawCode: strin
 
 async function channelConfigured() {
   const settings = await db.select().from(storeSettings).limit(1);
-  return settings[0]?.requiredTelegramChannel ?? null;
+  return settings[0]?.requiredTelegramChannel?.trim() || "@KeytopiaChannel";
 }
 
 async function isChannelMember(ctx: Context, channel: string | null) {
   if (!channel || !ctx.from || !telegramBot) return true;
   try {
     const member = await telegramBot.api.getChatMember(channel, ctx.from.id);
-    return ["creator", "administrator", "member"].includes(member.status);
+    return (
+      ["creator", "administrator", "member"].includes(member.status) ||
+      (member.status === "restricted" && member.is_member)
+    );
   } catch (error) {
     logger.warn({ err: error }, "Unable to verify Telegram channel membership");
     return false;
