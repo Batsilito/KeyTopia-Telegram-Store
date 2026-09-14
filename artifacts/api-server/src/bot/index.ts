@@ -447,7 +447,7 @@ type BroadcastRecipient = {
 
 async function broadcastToCustomers(
   message: (language: BotLanguage) => string,
-  keyboard: (language: BotLanguage) => InlineKeyboard,
+  keyboard: (language: BotLanguage) => InlineKeyboard | Keyboard,
 ) {
   if (!telegramBot) return;
   const recipients = await db
