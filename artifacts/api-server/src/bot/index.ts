@@ -43,6 +43,8 @@ export const telegramBot = telegramBotToken ? new Bot(telegramBotToken) : null;
 let binanceProcessingPromise: Promise<void> | null = null;
 let paymentNotificationPromise: Promise<void> | null = null;
 let schedulerStarted = false;
+const FLASH_SALE_REMINDER_INTERVAL_MS = 30 * 60 * 1000;
+const flashSaleReminderAt = new Map<string, number>();
 const BINANCE_POLL_INTERVAL_MS = 5_000;
 const BINANCE_SUBMISSION_RETRY_DELAYS_MS = [250, 1_000, 2_500, 5_000, 10_000, 20_000] as const;
 const verificationAnimationTimers = new Map<string, ReturnType<typeof setInterval>>();
@@ -510,29 +512,96 @@ export function broadcastNewProduct(product: typeof products.$inferSelect, avail
   );
 }
 
-export function broadcastFlashSale(
+function formatFlashSaleRemaining(endsAt: Date, language: BotLanguage, now = new Date()) {
+  const totalMinutes = Math.max(1, Math.ceil(Math.max(0, endsAt.getTime() - now.getTime()) / 60_000));
+  const days = Math.floor(totalMinutes / 1_440);
+  const hours = Math.floor((totalMinutes % 1_440) / 60);
+  const minutes = totalMinutes % 60;
+  if (language === "ar") {
+    const parts = [];
+    if (days) parts.push(`${days} يوم`);
+    if (hours) parts.push(`${hours} ساعة`);
+    if (minutes || parts.length === 0) parts.push(`${minutes} دقيقة`);
+    return parts.join(" و");
+  }
+  const parts = [];
+  if (days) parts.push(`${days}d`);
+  if (hours) parts.push(`${hours}h`);
+  if (minutes || parts.length === 0) parts.push(`${minutes}m`);
+  return parts.join(" ");
+}
+
+function flashSaleMessage(
+  sale: typeof flashSales.$inferSelect,
+  product: typeof products.$inferSelect,
+  language: BotLanguage,
+  reminder: boolean,
+  now = new Date(),
+) {
+  const name = language === "ar" ? product.nameAr : product.nameEn;
+  const heading = reminder
+    ? language === "ar" ? "⏰ العرض الخاطف ما زال مستمراً" : "⏰ FLASH SALE IS STILL ON"
+    : language === "ar" ? "🔥 عرض خاطف بدأ الآن" : "🔥 FLASH SALE STARTED";
+  const remainingLabel = language === "ar" ? "الوقت المتبقي" : "Time remaining";
+  return [
+    `<b>${heading}</b>`,
+    "",
+    `📦 <b>${language === "ar" ? "المنتج" : "Product"}:</b> ${escapeHtml(name)}`,
+    `🏷️ <b>${language === "ar" ? "السعر السابق" : "Old price"}:</b> ${sale.originalPriceUsd} USDT`,
+    `💰 <b>${language === "ar" ? "سعر العرض" : "Sale price"}:</b> ${sale.salePriceUsd} USDT`,
+    `⏳ <b>${remainingLabel}:</b> ${formatFlashSaleRemaining(sale.endsAt, language, now)}`,
+  ].join("\n");
+}
+
+async function broadcastFlashSaleToChannel(
+  sale: typeof flashSales.$inferSelect,
+  product: typeof products.$inferSelect,
+  reminder: boolean,
+) {
+  if (!telegramBot) return;
+  const channel = await channelConfigured();
+  if (!channel) return;
+  try {
+    await telegramBot.api.sendMessage(
+      channel,
+      flashSaleMessage(sale, product, "en", reminder),
+      {
+        parse_mode: "HTML",
+        reply_markup: new InlineKeyboard().text("Open shop", "nav:shop"),
+      },
+    );
+  } catch (error) {
+    logger.warn({ err: error, channel, saleId: sale.id }, "Unable to send flash sale channel notification");
+  }
+}
+
+export async function broadcastFlashSale(
   sale: typeof flashSales.$inferSelect,
   product: typeof products.$inferSelect,
 ) {
-  return broadcastToCustomers(
-    (language) => {
-      const name = language === "ar" ? product.nameAr : product.nameEn;
-      return [
-        `<b>${language === "ar" ? "🔥 عرض خاطف" : "🔥 FLASH SALE"}</b>`,
-        "",
-        `📦 <b>${language === "ar" ? "المنتج" : "Product"}:</b> ${escapeHtml(name)}`,
-        `🏷️ <b>${language === "ar" ? "السعر القديم" : "Old price"}:</b> ${sale.originalPriceUsd} USDT`,
-        `💰 <b>${language === "ar" ? "السعر الجديد" : "New price"}:</b> ${sale.salePriceUsd} USDT`,
-      ].join("\n");
-    },
+  await broadcastToCustomers(
+    (language) => flashSaleMessage(sale, product, language, false),
     (language) => new InlineKeyboard().text(language === "ar" ? "افتح المتجر" : "Open shop", "nav:shop"),
   );
+  await broadcastFlashSaleToChannel(sale, product, false);
+}
+
+export async function broadcastFlashSaleReminder(
+  sale: typeof flashSales.$inferSelect,
+  product: typeof products.$inferSelect,
+) {
+  await broadcastToCustomers(
+    (language) => flashSaleMessage(sale, product, language, true),
+    (language) => new InlineKeyboard().text(language === "ar" ? "افتح المتجر" : "Open shop", "nav:shop"),
+  );
+  await broadcastFlashSaleToChannel(sale, product, true);
 }
 
 export async function notifyDueFlashSales() {
+  const now = new Date();
   await db.update(flashSales)
     .set({ status: "expired", updatedAt: new Date() })
-    .where(and(eq(flashSales.status, "active"), lte(flashSales.endsAt, new Date())));
+    .where(and(eq(flashSales.status, "active"), lte(flashSales.endsAt, now)));
   if (!telegramBot) return;
   const dueSales = await db
     .select({ sale: flashSales, product: products })
@@ -540,8 +609,8 @@ export async function notifyDueFlashSales() {
     .innerJoin(products, eq(flashSales.productId, products.id))
     .where(and(
       eq(flashSales.status, "scheduled"),
-      lte(flashSales.startsAt, new Date()),
-      gt(flashSales.endsAt, new Date()),
+      lte(flashSales.startsAt, now),
+      gt(flashSales.endsAt, now),
     ));
   for (const due of dueSales) {
     const activated = await db
@@ -549,7 +618,33 @@ export async function notifyDueFlashSales() {
       .set({ status: "active", updatedAt: new Date() })
       .where(and(eq(flashSales.id, due.sale.id), eq(flashSales.status, "scheduled")))
       .returning();
-    if (activated[0]) await broadcastFlashSale(activated[0], due.product);
+    if (activated[0]) {
+      flashSaleReminderAt.set(activated[0].id, now.getTime() + FLASH_SALE_REMINDER_INTERVAL_MS);
+      await broadcastFlashSale(activated[0], due.product);
+    }
+  }
+  const activeSales = await db
+    .select({ sale: flashSales, product: products })
+    .from(flashSales)
+    .innerJoin(products, eq(flashSales.productId, products.id))
+    .where(and(
+      eq(flashSales.status, "active"),
+      lte(flashSales.startsAt, now),
+      gt(flashSales.endsAt, now),
+    ));
+  const activeSaleIds = new Set(activeSales.map(({ sale }) => sale.id));
+  for (const saleId of flashSaleReminderAt.keys()) {
+    if (!activeSaleIds.has(saleId)) flashSaleReminderAt.delete(saleId);
+  }
+  for (const active of activeSales) {
+    const reminderAt = flashSaleReminderAt.get(active.sale.id)
+      ?? active.sale.startsAt.getTime() + FLASH_SALE_REMINDER_INTERVAL_MS;
+    if (now.getTime() < reminderAt) {
+      flashSaleReminderAt.set(active.sale.id, reminderAt);
+      continue;
+    }
+    flashSaleReminderAt.set(active.sale.id, now.getTime() + FLASH_SALE_REMINDER_INTERVAL_MS);
+    await broadcastFlashSaleReminder(active.sale, active.product);
   }
 }
 
@@ -1131,11 +1226,16 @@ async function ensureAccess(ctx: Context, user: typeof users.$inferSelect) {
   return false;
 }
 
-async function showHome(ctx: Context, user: typeof users.$inferSelect) {
+async function showHome(
+  ctx: Context,
+  user: typeof users.$inferSelect,
+  includeShop = false,
+) {
   const language = languageOf(user);
   await ctx.reply(t(language, "welcome"), {
     reply_markup: mainMenuKeyboard(language),
   });
+  if (includeShop) await showShop(ctx, user);
 }
 
 async function showWallet(ctx: Context, user: typeof users.$inferSelect) {
@@ -1655,6 +1755,28 @@ async function getProductAvailability(product: typeof products.$inferSelect) {
   return { inStock: quantity > 0, quantity: String(quantity) };
 }
 
+async function getActiveFlashSale(productId: string, now = new Date()) {
+  const rows = await db
+    .select()
+    .from(flashSales)
+    .where(and(
+      eq(flashSales.productId, productId),
+      eq(flashSales.status, "active"),
+      lte(flashSales.startsAt, now),
+      gt(flashSales.endsAt, now),
+    ))
+    .orderBy(desc(flashSales.startsAt))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+function effectiveProductPrice(
+  product: typeof products.$inferSelect,
+  sale: typeof flashSales.$inferSelect | null,
+) {
+  return sale?.salePriceUsd ?? product.priceUsd;
+}
+
 async function replaceCallbackMessage(
   ctx: Context,
   text: string,
@@ -1728,6 +1850,15 @@ async function showShop(ctx: Context, user: typeof users.$inferSelect, editMessa
   const stockByProduct = new Map(
     stockRows.map((row) => [row.productId, Number(row.availableQuantity)]),
   );
+  const activeSaleRows = await db
+    .select()
+    .from(flashSales)
+    .where(and(
+      eq(flashSales.status, "active"),
+      lte(flashSales.startsAt, new Date()),
+      gt(flashSales.endsAt, new Date()),
+    ));
+  const activeSaleByProduct = new Map(activeSaleRows.map((sale) => [sale.productId, sale]));
   const sortedRows = [...rows].sort((left, right) => {
     const leftAvailable =
       left.stockType === "unlimited" || (stockByProduct.get(left.id) ?? 0) > 0;
@@ -1738,12 +1869,14 @@ async function showShop(ctx: Context, user: typeof users.$inferSelect, editMessa
   const keyboard = new InlineKeyboard();
   for (const product of sortedRows) {
     const name = language === "ar" ? product.nameAr : product.nameEn;
+    const sale = activeSaleByProduct.get(product.id) ?? null;
+    const price = effectiveProductPrice(product, sale);
     const isUnlimited = product.stockType === "unlimited";
     const quantity = isUnlimited ? "∞" : String(stockByProduct.get(product.id) ?? 0);
     const inStock = isUnlimited || quantity !== "0";
     keyboard
       .text(
-        `${name} | ${product.priceUsd} USDT | ${inStock ? `📦 ${quantity}` : t(language, "outOfStock")}`,
+        `${name} | ${price} USDT${sale ? " ⚡" : ""} | ${inStock ? `📦 ${quantity}` : t(language, "outOfStock")}`,
         `product:${product.id}`,
       )
       [inStock ? "success" : "danger"]()
@@ -1783,9 +1916,11 @@ async function showProduct(ctx: Context, user: typeof users.$inferSelect, produc
   const name = language === "ar" ? product.nameAr : product.nameEn;
   const instructions = language === "ar" ? product.instructionsAr : product.instructionsEn;
   const availability = await getProductAvailability(product);
+  const sale = await getActiveFlashSale(product.id);
+  const price = effectiveProductPrice(product, sale);
   const keyboard = new InlineKeyboard();
   if (availability.inStock) {
-    keyboard.text(`${t(language, "buyNow")} · ${product.priceUsd} USDT`, `buy:${product.id}`).row();
+    keyboard.text(`${t(language, "buyNow")} · ${price} USDT`, `buy:${product.id}`).row();
   }
   keyboard
     .text(t(language, "refreshStock"), `product:refresh:${product.id}`)
@@ -1794,7 +1929,7 @@ async function showProduct(ctx: Context, user: typeof users.$inferSelect, produc
   const details = [
     `🧩 ${name}`,
     "",
-    `💲 ${t(language, "price")}: ${product.priceUsd} USDT`,
+    `💲 ${t(language, "price")}: ${price} USDT${sale ? " ⚡ Flash Sale" : ""}`,
     `📊 ${t(language, "status")}: ${availability.inStock ? `🟢 ${t(language, "available")}` : `🔴 ${t(language, "outOfStock")}`}`,
     `📦 ${t(language, "quantity")}: ${availability.quantity}`,
     "",
@@ -1841,13 +1976,15 @@ async function showQuantitySelector(ctx: Context, user: typeof users.$inferSelec
   const product = rows[0];
   if (!product) return;
   const availability = await getProductAvailability(product);
+  const sale = await getActiveFlashSale(product.id);
+  const price = effectiveProductPrice(product, sale);
   const maxQuantity = product.stockType === "unlimited" ? 99 : Number(availability.quantity);
   if (!availability.inStock || maxQuantity < 1) {
     await ctx.reply(t(languageOf(user), "outOfStock"));
     return;
   }
   const quantity = Math.min(Math.max(Math.trunc(requestedQuantity), 1), maxQuantity);
-  const total = (Number(product.priceUsd) * quantity).toFixed(2);
+  const total = (Number(price) * quantity).toFixed(2);
   const language = languageOf(user);
   const name = language === "ar" ? product.nameAr : product.nameEn;
   const keyboard = new InlineKeyboard();
@@ -1867,7 +2004,7 @@ async function showQuantitySelector(ctx: Context, user: typeof users.$inferSelec
     "",
     `<b>${escapeHtml(name)}</b>`,
     "",
-    `<b>${t(language, "unitPrice")}: ${product.priceUsd} USDT</b>`,
+    `<b>${t(language, "unitPrice")}: ${price} USDT${sale ? " ⚡" : ""}</b>`,
     `<b>${t(language, "quantity")}: ${quantity}</b>`,
     `<b>${t(language, "total")}: ${total} USDT</b>`,
     `<b>${t(language, "availableStock")}: ${escapeHtml(availability.quantity)}</b>`,
@@ -1920,13 +2057,15 @@ async function beginCheckout(ctx: Context, user: typeof users.$inferSelect, prod
   const product = rows[0];
   if (!product) return;
   const availability = await getProductAvailability(product);
+  const sale = await getActiveFlashSale(product.id);
+  const price = effectiveProductPrice(product, sale);
   const maxQuantity = product.stockType === "unlimited" ? 99 : Number(availability.quantity);
   const quantity = Math.min(Math.max(Math.trunc(requestedQuantity), 1), maxQuantity);
   if (!availability.inStock || maxQuantity < 1 || quantity !== requestedQuantity) {
     await ctx.reply(t(languageOf(user), "outOfStock"));
     return;
   }
-  const total = (Number(product.priceUsd) * quantity).toFixed(2);
+  const total = (Number(price) * quantity).toFixed(2);
   const reference = `KT${Date.now().toString(36).toUpperCase()}${user.id.replaceAll("-", "").slice(0, 6).toUpperCase()}`;
   const settings = await db
     .select({ timeout: storeSettings.checkoutTimeoutMinutes })
@@ -1968,7 +2107,7 @@ async function beginCheckout(ctx: Context, user: typeof users.$inferSelect, prod
       durationSnapshot: product.duration,
       warrantySnapshot: product.warranty,
       quantity,
-      priceUsd: total,
+       priceUsd: total,
       expiresAt,
     }).returning();
   });
@@ -1998,7 +2137,7 @@ async function beginCheckout(ctx: Context, user: typeof users.$inferSelect, prod
     "",
     `🧩 <b>${t(language, "product")}:</b> ${escapeHtml(productName)}`,
     `➕ <b>${t(language, "quantity")}:</b> ${quantity}`,
-    `💲 <b>${t(language, "unitPrice")}:</b> ${product.priceUsd} USDT`,
+    `💲 <b>${t(language, "unitPrice")}:</b> ${price} USDT${sale ? " ⚡" : ""}`,
     `💰 <b>${t(language, "total")}:</b> ${total} USDT`,
     `🏪 <b>${t(language, "seller")}:</b> KeyTopia`,
     `📁 <b>${t(language, "shopOrder")}:</b> ${reference}`,
@@ -2377,7 +2516,7 @@ export function buildTelegramBot() {
       return;
     }
     if (data === "nav:home") {
-      if (await ensureAccess(ctx, user)) await showHome(ctx, user);
+      if (await ensureAccess(ctx, user)) await showHome(ctx, user, true);
       return;
     }
     if (data.startsWith("checkout:cancel:")) {
