@@ -1669,7 +1669,7 @@ async function showShop(ctx: Context, user: typeof users.$inferSelect, editMessa
       left.stockType === "unlimited" || (stockByProduct.get(left.id) ?? 0) > 0;
     const rightAvailable =
       right.stockType === "unlimited" || (stockByProduct.get(right.id) ?? 0) > 0;
-    return Number(rightAvailable) - Number(leftAvailable);
+    return Number(leftAvailable) - Number(rightAvailable);
   });
   const keyboard = new InlineKeyboard();
   for (const product of sortedRows) {
