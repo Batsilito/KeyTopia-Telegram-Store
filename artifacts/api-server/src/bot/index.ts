@@ -1678,9 +1678,10 @@ async function showShop(ctx: Context, user: typeof users.$inferSelect, editMessa
     const inStock = isUnlimited || quantity !== "0";
     keyboard
       .text(
-        `${inStock ? "🟢" : "🔴"} ${name} | ${product.priceUsd} USDT | ${inStock ? t(language, "available") : t(language, "outOfStock")} ${quantity}`,
+        `${name} | ${product.priceUsd} USDT | ${inStock ? `📦 ${quantity}` : t(language, "outOfStock")}`,
         `product:${product.id}`,
       )
+      [inStock ? "success" : "danger"]()
       .row();
   }
   keyboard.text(t(language, "refreshStock"), "shop:refresh").row();
