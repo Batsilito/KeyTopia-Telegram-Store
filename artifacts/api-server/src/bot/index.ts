@@ -1028,8 +1028,7 @@ async function applyReferralCode(user: typeof users.$inferSelect, rawCode: strin
 }
 
 async function channelConfigured() {
-  const settings = await db.select().from(storeSettings).limit(1);
-  return settings[0]?.requiredTelegramChannel?.trim() || "@KeytopiaChannel";
+  return "@KeytopiaChannel";
 }
 
 async function isChannelMember(ctx: Context, channel: string | null) {
