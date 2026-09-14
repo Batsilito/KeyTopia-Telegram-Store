@@ -2409,7 +2409,7 @@ export function buildTelegramBot() {
         return;
       }
       if (action === "set") {
-        await showQuantitySelector(ctx, user, productId, currentQuantity);
+        await beginCheckout(ctx, user, productId, currentQuantity);
         return;
       }
       if (action === "max") {
