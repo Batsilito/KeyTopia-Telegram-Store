@@ -1632,7 +1632,7 @@ async function replaceCallbackMessage(
   return false;
 }
 
-async function showShop(ctx: Context, user: typeof users.$inferSelect, requestedPage = 0, editMessage = false) {
+async function showShop(ctx: Context, user: typeof users.$inferSelect, editMessage = false) {
   if (!(await ensureAccess(ctx, user))) return;
   const language = languageOf(user);
   const rows = await db
@@ -1661,25 +1661,27 @@ async function showShop(ctx: Context, user: typeof users.$inferSelect, requested
   const stockByProduct = new Map(
     stockRows.map((row) => [row.productId, Number(row.availableQuantity)]),
   );
-  const pageSize = 10;
-  const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
-  const page = Math.min(Math.max(requestedPage, 0), pageCount - 1);
-  const pageRows = rows.slice(page * pageSize, (page + 1) * pageSize);
+  const sortedRows = [...rows].sort((left, right) => {
+    const leftAvailable =
+      left.stockType === "unlimited" || (stockByProduct.get(left.id) ?? 0) > 0;
+    const rightAvailable =
+      right.stockType === "unlimited" || (stockByProduct.get(right.id) ?? 0) > 0;
+    return Number(rightAvailable) - Number(leftAvailable);
+  });
   const keyboard = new InlineKeyboard();
-  for (const product of pageRows) {
+  for (const product of sortedRows) {
     const name = language === "ar" ? product.nameAr : product.nameEn;
     const isUnlimited = product.stockType === "unlimited";
     const quantity = isUnlimited ? "∞" : String(stockByProduct.get(product.id) ?? 0);
     const inStock = isUnlimited || quantity !== "0";
     keyboard
-      .text(`${name} | ${product.priceUsd} USDT | ${inStock ? "🟢" : "🔴"} ${quantity}`, `product:${product.id}`)
+      .text(
+        `${inStock ? "🟢" : "🔴"} ${name} | ${product.priceUsd} USDT | ${inStock ? t(language, "available") : t(language, "outOfStock")} ${quantity}`,
+        `product:${product.id}`,
+      )
       .row();
   }
-  if (page > 0) keyboard.text(t(language, "previous"), `shop:page:${page - 1}`);
-  keyboard.text(`${page + 1}/${pageCount}`, "shop:noop");
-  if (page < pageCount - 1) keyboard.text(t(language, "next"), `shop:page:${page + 1}`);
-  keyboard.row();
-  keyboard.text(t(language, "refreshStock"), `shop:refresh:${page}`).row();
+  keyboard.text(t(language, "refreshStock"), "shop:refresh").row();
   const channel = await channelConfigured();
   if (channel) {
     keyboard.url(
@@ -2332,18 +2334,13 @@ export function buildTelegramBot() {
       return;
     }
     if (data === "nav:shop") {
-      await showShop(ctx, user, 0, true);
+      await showShop(ctx, user, true);
       return;
     }
-    if (data.startsWith("shop:page:")) {
-      await showShop(ctx, user, Number(data.slice("shop:page:".length)), true);
+    if (data === "shop:refresh") {
+      await showShop(ctx, user, true);
       return;
     }
-    if (data.startsWith("shop:refresh:")) {
-      await showShop(ctx, user, Number(data.slice("shop:refresh:".length)), true);
-      return;
-    }
-    if (data === "shop:noop") return;
     if (data === "nav:checkout" || data === "nav:channel") {
       await ctx.reply(t(languageOf(user), "comingSoon"));
       return;
