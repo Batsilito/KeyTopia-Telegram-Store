@@ -38,6 +38,7 @@ import {
 } from "../lib/reward-policy";
 import { t, type BotLanguage } from "./locales";
 import { createProductShopButton, isValidTelegramCustomEmojiId } from "./shop-product-button";
+import { createProductDetailsMessage } from "./product-details-message";
 import { createWelcomeMessage } from "./welcome-message";
 
 export const telegramBotToken = process.env.TELEGRAM_BOT_TOKEN;
@@ -2034,34 +2035,25 @@ async function showProduct(ctx: Context, user: typeof users.$inferSelect, produc
     .text(t(language, "refreshStock"), `product:refresh:${product.id}`)
     .row()
     .text(t(language, "backToShop"), "nav:shop");
-  const details = [
-    `🧩 ${name}`,
-    "",
-    `💲 ${t(language, "price")}: ${price} USDT${sale ? " ⚡ Flash Sale" : ""}`,
-    `📊 ${t(language, "status")}: ${availability.inStock ? `🟢 ${t(language, "available")}` : `🔴 ${t(language, "outOfStock")}`}`,
-    `📦 ${t(language, "quantity")}: ${availability.quantity}`,
-    "",
-    `📝 ${t(language, "description")}`,
-    instructions || "• —",
-    "",
-    `🛡 ${t(language, "warranty")}`,
-    product.warranty || "—",
-    "",
-    `📌 ${t(language, "importantNotes")}`,
-    `• ${t(language, "duration")}: ${product.duration}`,
-    "",
-    `📖 ${t(language, "quickGuide")}`,
-    t(language, "guideReview"),
-    t(language, "guideBuy"),
-    t(language, "guidePay"),
-    t(language, "guideDelivery"),
-    "",
-    `📦 ${t(language, "deliveryNotice")}`,
-  ].join("\n");
+  const details = createProductDetailsMessage({
+    language,
+    name,
+    price: String(price),
+    inStock: availability.inStock,
+    quantity: availability.quantity,
+    flashSale: Boolean(sale),
+    description: instructions,
+    warranty: product.warranty,
+    duration: product.duration,
+  });
   if (product.imageUrl && ctx.callbackQuery?.message && !("photo" in ctx.callbackQuery.message)) {
     try {
       await ctx.api.deleteMessage(ctx.chat!.id, ctx.callbackQuery.message.message_id);
-      await ctx.replyWithPhoto(product.imageUrl, { caption: details, reply_markup: keyboard });
+      await ctx.replyWithPhoto(product.imageUrl, {
+        caption: details,
+        parse_mode: "HTML",
+        reply_markup: keyboard,
+      });
       return;
     } catch (error) {
       logger.warn({ err: error, productId: product.id }, "Unable to replace product message with image");
@@ -2069,7 +2061,11 @@ async function showProduct(ctx: Context, user: typeof users.$inferSelect, produc
   }
   if (product.imageUrl && !ctx.callbackQuery) {
     try {
-      await ctx.replyWithPhoto(product.imageUrl, { caption: details, reply_markup: keyboard });
+      await ctx.replyWithPhoto(product.imageUrl, {
+        caption: details,
+        parse_mode: "HTML",
+        reply_markup: keyboard,
+      });
       return;
     } catch (error) {
       logger.warn({ err: error, productId: product.id }, "Unable to send product image");
