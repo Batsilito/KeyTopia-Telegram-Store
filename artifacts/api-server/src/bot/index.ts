@@ -38,6 +38,7 @@ import {
 } from "../lib/reward-policy";
 import { t, type BotLanguage } from "./locales";
 import { createProductShopButton, isValidTelegramCustomEmojiId } from "./shop-product-button";
+import { createWelcomeMessage } from "./welcome-message";
 
 export const telegramBotToken = process.env.TELEGRAM_BOT_TOKEN;
 export const telegramBot = telegramBotToken ? new Bot(telegramBotToken) : null;
@@ -211,15 +212,17 @@ export async function clearPaymentVerificationMessage(eventKey: string) {
 function mainMenuKeyboard(language: BotLanguage) {
   return new Keyboard()
     .text(t(language, "shop"))
-    .text(t(language, "flashSale"))
+    .row()
+    .text(t(language, "profile"))
+    .text(t(language, "deposit"))
     .row()
     .text(t(language, "orders"))
-    .text(t(language, "wallet"))
+    .text(t(language, "settings"))
     .row()
-    .text(t(language, "refer"))
     .text(t(language, "support"))
     .row()
-    .text(t(language, "settings"))
+    .text(t(language, "refer"))
+    .row()
     .resized();
 }
 
@@ -1271,9 +1274,30 @@ async function showHome(
   includeShop = false,
 ) {
   const language = languageOf(user);
-  await ctx.reply(t(language, "welcome"), {
-    reply_markup: mainMenuKeyboard(language),
-  });
+  const [settings, channel] = await Promise.all([
+    db
+      .select({
+        storeName: storeSettings.storeName,
+        supportAvailable: storeSettings.supportAvailable,
+      })
+      .from(storeSettings)
+      .limit(1),
+    channelConfigured(),
+  ]);
+  const store = settings[0];
+  await ctx.reply(
+    createWelcomeMessage({
+      language,
+      firstName: user.firstName,
+      storeName: store?.storeName ?? "KeyTopia",
+      channel,
+      supportAvailable: store?.supportAvailable ?? true,
+    }),
+    {
+      parse_mode: "HTML",
+      reply_markup: mainMenuKeyboard(language),
+    },
+  );
   if (includeShop) await showShop(ctx, user);
 }
 
@@ -2757,7 +2781,11 @@ export function buildTelegramBot() {
     if (await acceptWalletTopUpAmount(ctx, user, ctx.message.text)) return;
     const language = languageOf(user);
     if (ctx.message.text === t(language, "shop")) await showShop(ctx, user);
-    else if (ctx.message.text === t(language, "wallet")) await showWallet(ctx, user);
+    else if (ctx.message.text === t(language, "profile")) await showProfile(ctx, user);
+    else if (
+      ctx.message.text === t(language, "deposit") ||
+      ctx.message.text === t(language, "wallet")
+    ) await showWallet(ctx, user);
     else if (ctx.message.text === t(language, "orders")) await showOrders(ctx, user);
     else if (ctx.message.text === t(language, "support")) await showSupport(ctx, user);
     else if (ctx.message.text === t(language, "refer")) await showReferral(ctx, user);
