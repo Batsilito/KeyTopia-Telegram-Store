@@ -20,6 +20,7 @@ import {
   UpdateSupportTicketBody,
   UpdateOrderStatusBody,
   UpdateStoreSettingsBody,
+  SetManualProductStockBody,
 } from "@workspace/api-zod";
 import {
   and,
@@ -590,7 +591,22 @@ router.post("/inventory", async (req, res) => {
     return res.status(400).json({ error: "Inventory values cannot use the internal stock-unit prefix" });
   }
   const hashes = values.map((value) => createValueHash(value));
-  const imported = await db.transaction(async (tx) => {
+  const importResult = await db.transaction(async (tx) => {
+    const lockedProductRows = await tx
+      .select({
+        deliveryType: products.deliveryType,
+        stockType: products.stockType,
+      })
+      .from(products)
+      .where(eq(products.id, parsed.data.productId))
+      .for("update")
+      .limit(1);
+    const lockedProduct = lockedProductRows[0];
+    if (!lockedProduct) return { kind: "not_found" as const };
+    if (lockedProduct.deliveryType !== selectedProduct.deliveryType) {
+      return { kind: "product_changed" as const };
+    }
+
     const existing = await tx
       .select({ valueHash: inventoryItems.valueHash })
       .from(inventoryItems)
@@ -609,13 +625,18 @@ router.post("/inventory", async (req, res) => {
         })),
       ).onConflictDoNothing({ target: inventoryItems.valueHash }).returning({ id: inventoryItems.id })
       : [];
-    if (isManualProduct && selectedProduct.stockType !== "limited") {
+    if (isManualProduct && lockedProduct.stockType !== "limited") {
       await tx.update(products)
         .set({ stockType: "limited", updatedAt: new Date() })
         .where(eq(products.id, selectedProduct.id));
     }
-    return inserted;
+    return { kind: "imported" as const, items: inserted };
   });
+  if (importResult.kind === "not_found") return res.status(404).json({ error: "Product not found" });
+  if (importResult.kind === "product_changed") {
+    return res.status(409).json({ error: "Product delivery type changed during this stock import" });
+  }
+  const imported = importResult.items;
   const available = await db
     .select({ total: count() })
     .from(inventoryItems)
@@ -629,6 +650,129 @@ router.post("/inventory", async (req, res) => {
     imported: imported.length,
     skippedDuplicates: submittedValues.length - imported.length,
     available: Number(available[0]?.total ?? 0),
+  });
+});
+
+router.put("/products/:productId/manual-stock", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!requireSuperAdmin(admin, res)) return res;
+  const parsed = SetManualProductStockBody.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Invalid available stock count" });
+
+  const productId = Array.isArray(req.params.productId)
+    ? req.params.productId[0]
+    : req.params.productId;
+  if (!productId) return res.status(404).json({ error: "Product not found" });
+  const targetStock = parsed.data.availableStock;
+  const result = await db.transaction(async (tx) => {
+    const productRows = await tx
+      .select()
+      .from(products)
+      .where(eq(products.id, productId))
+      .for("update")
+      .limit(1);
+    const product = productRows[0];
+    if (!product) return { kind: "not_found" as const };
+    if (product.deliveryType !== "manual") return { kind: "not_manual" as const };
+
+    const availableRows = await tx
+      .select({
+        id: inventoryItems.id,
+        secretValue: inventoryItems.secretValue,
+      })
+      .from(inventoryItems)
+      .where(
+        and(
+          eq(inventoryItems.productId, product.id),
+          eq(inventoryItems.status, "available"),
+        ),
+      )
+      .orderBy(desc(inventoryItems.createdAt))
+      .for("update");
+    if (availableRows.some((item) => !isManualStockUnitValue(item.secretValue))) {
+      return { kind: "unsafe_stock" as const };
+    }
+
+    const previousAvailable = availableRows.length;
+    const delta = targetStock - previousAvailable;
+    let added = 0;
+    let disabled = 0;
+
+    if (delta > 0) {
+      const values = Array.from({ length: delta }, () => {
+        const secretValue = createManualStockUnitValue();
+        return {
+          productId: product.id,
+          secretValue,
+          valueHash: createValueHash(secretValue),
+          unitCostUsd: null,
+        };
+      });
+      const inserted = await tx.insert(inventoryItems).values(values).returning({ id: inventoryItems.id });
+      added = inserted.length;
+    } else if (delta < 0) {
+      const idsToDisable = availableRows.slice(0, Math.abs(delta)).map((item) => item.id);
+      const updated = await tx
+        .update(inventoryItems)
+        .set({ status: "disabled", updatedAt: new Date() })
+        .where(
+          and(
+            inArray(inventoryItems.id, idsToDisable),
+            eq(inventoryItems.status, "available"),
+          ),
+        )
+        .returning({ id: inventoryItems.id });
+      disabled = updated.length;
+    }
+
+    if (product.stockType !== "limited") {
+      await tx
+        .update(products)
+        .set({ stockType: "limited", updatedAt: new Date() })
+        .where(eq(products.id, product.id));
+    }
+
+    await tx.insert(auditLogs).values({
+      adminId: admin.id,
+      action: "manual_stock_adjusted",
+      entityType: "product",
+      entityId: product.id,
+      beforeValues: { availableStock: previousAvailable },
+      afterValues: { availableStock: targetStock, added, disabled },
+    });
+
+    return {
+      kind: "updated" as const,
+      productId: product.id,
+      active: product.active,
+      previousAvailable,
+      availableStock: previousAvailable + added - disabled,
+      added,
+      disabled,
+    };
+  });
+
+  if (result.kind === "not_found") return res.status(404).json({ error: "Product not found" });
+  if (result.kind === "not_manual") {
+    return res.status(409).json({ error: "Stock counts can only be adjusted for manual-delivery products" });
+  }
+  if (result.kind === "unsafe_stock") {
+    return res.status(409).json({ error: "This product contains inventory values that cannot be adjusted as count-only stock" });
+  }
+
+  if (result.added > 0 && result.active) {
+    const productRows = await db.select().from(products).where(eq(products.id, result.productId)).limit(1);
+    if (productRows[0]) {
+      void broadcastProductRestocked(productRows[0], result.added, result.availableStock);
+    }
+  }
+
+  return res.json({
+    productId: result.productId,
+    previousAvailable: result.previousAvailable,
+    availableStock: result.availableStock,
+    added: result.added,
+    disabled: result.disabled,
   });
 });
 

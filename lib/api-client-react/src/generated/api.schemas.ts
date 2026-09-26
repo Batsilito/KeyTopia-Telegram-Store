@@ -189,6 +189,50 @@ export interface ProductUpdate {
   instructionsAr?: string;
 }
 
+export interface ManualProductStockInput {
+  /**
+     * @minimum 0
+     * @maximum 10000
+     */
+  availableStock: number;
+}
+
+export interface ManualProductStockResult {
+  productId: string;
+  previousAvailable: number;
+  availableStock: number;
+  added: number;
+  disabled: number;
+}
+
+export type ProductImageUploadInputContentType = typeof ProductImageUploadInputContentType[keyof typeof ProductImageUploadInputContentType];
+
+
+export const ProductImageUploadInputContentType = {
+  'image/jpeg': 'image/jpeg',
+  'image/png': 'image/png',
+  'image/webp': 'image/webp',
+} as const;
+
+export interface ProductImageUploadInput {
+  /**
+     * @minLength 1
+     * @maxLength 255
+     */
+  name: string;
+  /**
+     * @minimum 1
+     * @maximum 8388608
+     */
+  size: number;
+  contentType: ProductImageUploadInputContentType;
+}
+
+export interface ProductImageUploadUrl {
+  uploadUrl: string;
+  objectPath: string;
+}
+
 export interface ProductPage {
   items: Product[];
   page: number;

@@ -1,4 +1,4 @@
-import { useMemo, useState, type ButtonHTMLAttributes, type FormEvent, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react';
+import { useEffect, useMemo, useState, type ButtonHTMLAttributes, type FormEvent, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react';
 import { createPortal } from 'react-dom';
 import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
 import { Link, Route, Switch, useLocation, useRoute } from 'wouter';
@@ -6,8 +6,8 @@ import {
   Activity, Archive, ArrowDownRight, ArrowUpRight, BarChart3, Bell, Boxes, Check, ChevronDown,
   CircleDollarSign, ClipboardList, Clock3, CreditCard, Database, FileClock, Filter, Gauge,
   FileSpreadsheet, Headphones, KeyRound, LayoutDashboard, LogOut, Menu, Package, Percent, Plus, RefreshCw,
-  Search, Settings2, ShieldCheck, ShoppingBag, SlidersHorizontal, Sparkles, Tag, Ticket, Trash2,
-  Truck, UserRound, Users, X, type LucideIcon,
+  Image as ImageIcon, Search, Settings2, ShieldCheck, ShoppingBag, SlidersHorizontal, Sparkles, Tag, Ticket, Trash2,
+  Truck, Upload, UserRound, Users, X, type LucideIcon,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import {
@@ -19,6 +19,7 @@ import {
   useRejectPayment, useReplyToSupportTicket, useUpdateOrderStatus, useUpdateProduct, useUpdateSupportTicket,
   useUpdateStoreSettings, getGetAdminSessionQueryKey, getGetAnalyticsSummaryQueryKey,
   getGetDashboardOverviewQueryKey, getGetInventorySummaryQueryKey, getGetStoreSettingsQueryKey,
+  useRequestProductImageUpload, useSetManualProductStock,
   useSendAdminTelegramTest,
   getListCustomersQueryKey, getListFlashSalesQueryKey, getListInventoryQueryKey,
   getListOrdersQueryKey, getListPaymentsQueryKey, getListProductsQueryKey,
@@ -270,20 +271,93 @@ function Products() {
 
 function ProductModal({ product, onClose, onSave, pending }: { product: any; onClose: () => void; onSave: (data: any) => void; pending: boolean }) {
   const [form, setForm] = useState<any>(product ? { ...product } : { nameEn: '', nameAr: '', duration: '30 days', warranty: '7 days', priceUsd: 0, deliveryType: 'automatic', stockType: 'limited', active: true, displayStock: true, lowStockThreshold: 5, instructionsEn: '', instructionsAr: '', imageUrl: null, telegramCustomEmojiId: null });
+  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
+  const [imageError, setImageError] = useState('');
+  const [imageUploading, setImageUploading] = useState(false);
+  const requestImageUpload = useRequestProductImageUpload();
   const set = (key: string, value: any) => setForm((current: any) => ({ ...current, [key]: value }));
+  useEffect(() => () => {
+    if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
+  }, [imagePreviewUrl]);
+  const storedImagePreview = form.imageUrl?.startsWith('/objects/uploads/') && product?.id
+    ? `/api/products/${product.id}/image`
+    : form.imageUrl;
+  const previewImage = imagePreviewUrl || storedImagePreview;
+  const uploadImage = async (file?: File) => {
+    if (!file) return;
+    setImageError('');
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+      setImageError('Choose a JPEG, PNG, or WebP image.');
+      return;
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      setImageError('Image must be 8 MB or smaller.');
+      return;
+    }
+
+    setImageUploading(true);
+    try {
+      const upload = await requestImageUpload.mutateAsync({
+        data: {
+          name: file.name,
+          size: file.size,
+          contentType: file.type as 'image/jpeg' | 'image/png' | 'image/webp',
+        },
+      });
+      const response = await fetch(upload.uploadUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': file.type },
+        body: file,
+      });
+      if (!response.ok) throw new Error(`Upload failed (${response.status}).`);
+      set('imageUrl', upload.objectPath);
+      setImagePreviewUrl(URL.createObjectURL(file));
+    } catch (error) {
+      setImageError(error instanceof Error ? error.message : 'Unable to upload this image.');
+    } finally {
+      setImageUploading(false);
+    }
+  };
   return <Modal
     title={product ? 'Edit product' : 'Add product'}
-    onClose={onClose}
+    onClose={() => { if (!imageUploading && !pending) onClose(); }}
     className="h-[calc(100dvh-2rem)] md:h-[calc(100dvh-3rem)]"
     footer={<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between" data-testid="product-form-actions">
       <label className="flex items-center gap-2 text-sm font-bold"><input type="checkbox" checked={form.active} onChange={(e) => set('active', e.target.checked)} /> Product is active</label>
       <div className="flex justify-end gap-2">
-        <Button variant="secondary" onClick={onClose}>Cancel</Button>
-        <Button disabled={!form.nameEn.trim() || !form.nameAr.trim() || pending} onClick={() => onSave({ ...form, priceUsd: Number(form.priceUsd), lowStockThreshold: Number(form.lowStockThreshold), telegramCustomEmojiId: form.telegramCustomEmojiId?.trim() || null })} data-testid="button-save-product"><Check size={15} /> Save product</Button>
+        <Button variant="secondary" disabled={imageUploading || pending} onClick={onClose}>Cancel</Button>
+        <Button disabled={!form.nameEn.trim() || !form.nameAr.trim() || pending || imageUploading} onClick={() => onSave({ ...form, priceUsd: Number(form.priceUsd), lowStockThreshold: Number(form.lowStockThreshold), telegramCustomEmojiId: form.telegramCustomEmojiId?.trim() || null })} data-testid="button-save-product"><Check size={15} /> Save product</Button>
       </div>
     </div>
   }>
     <div className="grid gap-6 pb-1">
+      <section aria-labelledby="product-image-heading">
+        <h3 id="product-image-heading" className="font-mono text-[10px] font-bold uppercase tracking-[.16em] text-muted-foreground">Product photo</h3>
+        <div className="mt-3 grid gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
+          <div className="grid min-h-40 place-items-center overflow-hidden rounded-xl border border-dashed border-border bg-muted/30">
+            {previewImage
+              ? <img src={previewImage} alt={form.nameEn || 'Product photo'} className="max-h-56 w-full object-contain" />
+              : <div className="flex flex-col items-center gap-2 py-6 text-muted-foreground"><ImageIcon size={24} /><span className="text-xs font-semibold">No photo selected</span></div>}
+          </div>
+          <div className="flex flex-col items-start gap-3">
+            <p className="text-xs leading-5 text-muted-foreground">JPEG, PNG, or WebP · maximum 8 MB. The photo appears above the product details in Telegram.</p>
+            <label className={`inline-flex cursor-pointer items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs font-extrabold transition hover:bg-muted ${imageUploading || pending ? 'pointer-events-none opacity-45' : ''}`}>
+              <Upload size={15} className="text-primary" />
+              {imageUploading ? 'Uploading photo…' : previewImage ? 'Replace photo' : 'Upload photo'}
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                className="sr-only"
+                disabled={imageUploading || pending}
+                onChange={(e) => { void uploadImage(e.target.files?.[0]); e.currentTarget.value = ''; }}
+                data-testid="input-product-image"
+              />
+            </label>
+            {previewImage && <Button variant="quiet" className="px-2 text-xs text-destructive" disabled={imageUploading || pending} onClick={() => { set('imageUrl', null); setImagePreviewUrl(null); setImageError(''); }} data-testid="button-remove-product-image"><Trash2 size={14} /> Remove photo</Button>}
+            {imageError && <p role="alert" className="text-xs font-bold text-destructive" data-testid="status-product-image-error">{imageError}</p>}
+          </div>
+        </div>
+      </section>
       <section aria-labelledby="product-details-heading">
         <h3 id="product-details-heading" className="font-mono text-[10px] font-bold uppercase tracking-[.16em] text-muted-foreground">Product details</h3>
         <div className="mt-3 grid gap-4 md:grid-cols-2">
@@ -335,19 +409,21 @@ function Inventory() {
   const [productId, setProductId] = useState('');
   const [importText, setImportText] = useState('');
   const [quantityText, setQuantityText] = useState('');
+  const [targetStockText, setTargetStockText] = useState('');
   const [unitCostText, setUnitCostText] = useState('');
   const [fileName, setFileName] = useState('');
   const [fileError, setFileError] = useState('');
-  const products = useListProducts({ page: 1, pageSize: 100, status: 'active' });
+  const products = useListProducts({ page: 1, pageSize: 100, status: 'all' });
   const summary = useGetInventorySummary({ query: { queryKey: getGetInventorySummaryQueryKey(), staleTime: 30_000 } });
   const query = useListInventory({ page: 1, pageSize: 50, productId: productId || undefined, status: 'all' });
   const importMutation = useImportInventory();
+  const manualStock = useSetManualProductStock();
   const disable = useDisableInventory();
   const qc = useQueryClient();
   const refresh = () => {
     query.refetch();
     summary.refetch();
-    qc.invalidateQueries({ queryKey: getListProductsQueryKey({ page: 1, pageSize: 100, status: 'active' }) });
+    qc.invalidateQueries({ queryKey: getListProductsQueryKey({ page: 1, pageSize: 100, status: 'all' }) });
   };
   const totals = summary.data;
   const importValues = normalizeInventoryLines(importText);
@@ -355,12 +431,17 @@ function Inventory() {
   const isManualProduct = selectedProduct?.deliveryType === 'manual';
   const quantityToAdd = Number(quantityText);
   const validQuantity = quantityText !== '' && Number.isInteger(quantityToAdd) && quantityToAdd >= 1 && quantityToAdd <= 1000;
+  const targetAvailableStock = Number(targetStockText);
+  const validTargetAvailableStock = targetStockText !== '' && Number.isInteger(targetAvailableStock) && targetAvailableStock >= 0 && targetAvailableStock <= 10000;
   const unitCostUsd = Number(unitCostText);
   const validUnitCost = /^\d{1,10}(?:\.\d{1,2})?$/.test(unitCostText.trim()) &&
     Number.isFinite(unitCostUsd) && unitCostUsd >= 0 && unitCostUsd <= 9999999999.99;
   const changeProduct = (nextProductId: string) => {
     importMutation.reset();
+    manualStock.reset();
     setProductId(nextProductId);
+    const nextProduct = products.data?.items.find((product) => product.id === nextProductId);
+    setTargetStockText(nextProduct?.deliveryType === 'manual' ? String(nextProduct.availableStock) : '');
     setImportText('');
     setQuantityText('');
     setUnitCostText('');
@@ -428,6 +509,33 @@ function Inventory() {
           </>}
           <Button disabled={!productId || importMutation.isPending || (isManualProduct ? !validQuantity : importValues.length === 0 || !validUnitCost)} onClick={addStock} data-testid="button-import-inventory"><Plus size={15} /> {isManualProduct ? `Add ${validQuantity ? quantityToAdd : ''} pieces` : `Import ${importValues.length || ''} values`}</Button>
           {importMutation.data && <div className="rounded-lg bg-primary/10 p-3 text-xs font-bold text-primary">{isManualProduct ? `Added ${importMutation.data.imported} stock units.` : `Imported ${importMutation.data.imported} values · ${importMutation.data.skippedDuplicates} duplicates skipped.`} Available stock: {importMutation.data.available}.</div>}
+          {isManualProduct && <div className="grid gap-3 rounded-xl border border-border bg-muted/25 p-4">
+            <div>
+              <h4 className="text-sm font-extrabold">Set available stock</h4>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">Set the exact sellable count. Reserved and delivered units stay unchanged; reductions disable units without deleting their history.</p>
+            </div>
+            <Field label={`Target available count · current ${selectedProduct.availableStock}`}>
+              <Input type="number" min="0" max="10000" step="1" value={targetStockText} onChange={(e) => setTargetStockText(e.target.value)} placeholder="Enter the new available count" data-testid="input-manual-stock-target" />
+            </Field>
+            {selectedProduct.stockType === 'unlimited' && <p className="rounded-lg bg-amber-500/10 p-3 text-xs font-semibold text-amber-800 dark:text-amber-200">Setting a count switches this product from unlimited to limited stock.</p>}
+            <Button
+              variant="secondary"
+              disabled={!validTargetAvailableStock || manualStock.isPending || importMutation.isPending}
+              onClick={() => manualStock.mutate(
+                { productId, data: { availableStock: targetAvailableStock } },
+                { onSuccess: refresh },
+              )}
+              data-testid="button-set-manual-stock"
+            >
+              {manualStock.isPending ? 'Updating stock…' : `Set available to ${validTargetAvailableStock ? targetAvailableStock : '…'}`}
+            </Button>
+            {manualStock.data && <div role="status" className="rounded-lg bg-primary/10 p-3 text-xs font-bold text-primary" data-testid="status-manual-stock-adjusted">
+              Stock updated from {manualStock.data.previousAvailable} to {manualStock.data.availableStock}. {manualStock.data.added} added · {manualStock.data.disabled} disabled.
+            </div>}
+            {manualStock.isError && <div role="alert" className="rounded-lg bg-destructive/10 p-3 text-xs font-bold text-destructive" data-testid="status-manual-stock-error">
+              {manualStock.error.message || 'Unable to adjust available stock.'}
+            </div>}
+          </div>}
         </div>
       </Card>
       <Card>

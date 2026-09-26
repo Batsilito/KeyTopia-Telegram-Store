@@ -21,6 +21,7 @@ tags:
   - name: settings
   - name: analytics
   - name: diagnostics
+  - name: storage
 paths:
   /healthz:
     get:
@@ -189,6 +190,79 @@ paths:
           description: Product not found
         "409":
           description: Product has related records and cannot be deleted
+  /products/{productId}/image:
+    get:
+      operationId: getProductImage
+      tags: [products]
+      summary: Get a product image for authenticated admin preview
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      responses:
+        "200":
+          description: Product image
+          content:
+            image/jpeg:
+              schema: { type: string, format: binary }
+            image/png:
+              schema: { type: string, format: binary }
+            image/webp:
+              schema: { type: string, format: binary }
+        "401":
+          description: Authentication required
+        "404":
+          description: Product image not found
+  /products/{productId}/manual-stock:
+    put:
+      operationId: setManualProductStock
+      tags: [inventory]
+      summary: Set the available stock count for a manual-delivery product
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ManualProductStockInput"
+      responses:
+        "200":
+          description: Updated available stock count
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManualProductStockResult"
+        "400":
+          description: Invalid target count
+        "404":
+          description: Product not found
+        "409":
+          description: Product is not manual delivery or contains non-count stock values
+  /storage/product-images/upload-url:
+    post:
+      operationId: requestProductImageUpload
+      tags: [storage]
+      summary: Request a short-lived upload URL for a product image
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductImageUploadInput"
+      responses:
+        "200":
+          description: Upload URL and private object path
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductImageUploadUrl"
+        "400":
+          description: Invalid image metadata
+        "401":
+          description: Authentication required
+        "403":
+          description: Super-admin access required
+        "500":
+          description: Unable to create an upload URL
   /inventory:
     get:
       operationId: listInventory
@@ -771,6 +845,35 @@ components:
         telegramCustomEmojiId: { type: ["string", "null"], maxLength: 32, pattern: "^[0-9]{1,32}$" }
         instructionsEn: { type: string }
         instructionsAr: { type: string }
+    ManualProductStockInput:
+      type: object
+      properties:
+        availableStock: { type: integer, minimum: 0, maximum: 10000 }
+      required: [availableStock]
+    ManualProductStockResult:
+      type: object
+      properties:
+        productId: { type: string, format: uuid }
+        previousAvailable: { type: integer }
+        availableStock: { type: integer }
+        added: { type: integer }
+        disabled: { type: integer }
+      required: [productId, previousAvailable, availableStock, added, disabled]
+    ProductImageUploadInput:
+      type: object
+      properties:
+        name: { type: string, minLength: 1, maxLength: 255 }
+        size: { type: integer, minimum: 1, maximum: 8388608 }
+        contentType:
+          type: string
+          enum: [image/jpeg, image/png, image/webp]
+      required: [name, size, contentType]
+    ProductImageUploadUrl:
+      type: object
+      properties:
+        uploadUrl: { type: string, format: uri }
+        objectPath: { type: string }
+      required: [uploadUrl, objectPath]
     ProductPage:
       type: object
       properties:

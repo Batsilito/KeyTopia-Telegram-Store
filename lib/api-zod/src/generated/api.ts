@@ -351,6 +351,62 @@ export const DeleteProductResponse = zod.void()
 
 
 /**
+ * @summary Get a product image for authenticated admin preview
+ */
+export const GetProductImageParams = zod.object({
+  "productId": zod.coerce.string().uuid()
+})
+
+export const GetProductImageResponse = zod.unknown()
+
+
+/**
+ * @summary Set the available stock count for a manual-delivery product
+ */
+export const SetManualProductStockParams = zod.object({
+  "productId": zod.coerce.string().uuid()
+})
+
+export const setManualProductStockBodyAvailableStockMin = 0;
+export const setManualProductStockBodyAvailableStockMax = 10000;
+
+
+
+export const SetManualProductStockBody = zod.object({
+  "availableStock": zod.number().int().min(setManualProductStockBodyAvailableStockMin).max(setManualProductStockBodyAvailableStockMax)
+})
+
+export const SetManualProductStockResponse = zod.object({
+  "productId": zod.string().uuid(),
+  "previousAvailable": zod.number().int(),
+  "availableStock": zod.number().int(),
+  "added": zod.number().int(),
+  "disabled": zod.number().int()
+})
+
+
+/**
+ * @summary Request a short-lived upload URL for a product image
+ */
+export const requestProductImageUploadBodyNameMax = 255;
+
+export const requestProductImageUploadBodySizeMax = 8388608;
+
+
+
+export const RequestProductImageUploadBody = zod.object({
+  "name": zod.string().min(1).max(requestProductImageUploadBodyNameMax),
+  "size": zod.number().int().min(1).max(requestProductImageUploadBodySizeMax),
+  "contentType": zod.enum(['image/jpeg', 'image/png', 'image/webp'])
+})
+
+export const RequestProductImageUploadResponse = zod.object({
+  "uploadUrl": zod.string().url(),
+  "objectPath": zod.string()
+})
+
+
+/**
  * @summary List inventory items
  */
 export const listInventoryQueryPageDefault = 1;

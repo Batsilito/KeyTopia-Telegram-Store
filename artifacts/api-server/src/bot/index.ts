@@ -49,9 +49,11 @@ import {
 import { createOrderDeliveryMessage } from "./order-delivery-message";
 import { createOrderPaymentConfirmationMessage } from "./order-payment-confirmation-message";
 import { createWelcomeMessage } from "./welcome-message";
+import { ObjectStorageService } from "../lib/objectStorage";
 
 export const telegramBotToken = process.env.TELEGRAM_BOT_TOKEN;
 export const telegramBot = telegramBotToken ? new Bot(telegramBotToken) : null;
+const objectStorageService = new ObjectStorageService();
 let binanceProcessingPromise: Promise<void> | null = null;
 let paymentNotificationPromise: Promise<void> | null = null;
 let schedulerStarted = false;
@@ -2195,32 +2197,44 @@ async function showProduct(
     warranty: product.warranty,
     duration: product.duration,
   });
-  if (product.imageUrl && ctx.callbackQuery?.message && !("photo" in ctx.callbackQuery.message)) {
+  if (product.imageUrl) {
+    let photoSent = false;
     try {
-      await ctx.api.deleteMessage(ctx.chat!.id, ctx.callbackQuery.message.message_id);
-      await ctx.replyWithPhoto(product.imageUrl, {
-        caption: details,
-        parse_mode: "HTML",
-        reply_markup: keyboard,
-      });
-      return;
-    } catch (error) {
-      logger.warn({ err: error, productId: product.id }, "Unable to replace product message with image");
-    }
-  }
-  if (product.imageUrl && !ctx.callbackQuery) {
-    try {
-      await ctx.replyWithPhoto(product.imageUrl, {
-        caption: details,
-        parse_mode: "HTML",
-        reply_markup: keyboard,
-      });
-      return;
+      const photo = await productTelegramPhoto(product.imageUrl, product.id);
+      await ctx.replyWithPhoto(photo);
+      photoSent = true;
     } catch (error) {
       logger.warn({ err: error, productId: product.id }, "Unable to send product image");
     }
+    if (photoSent) {
+      const callbackMessage = ctx.callbackQuery?.message;
+      if (callbackMessage?.chat.type === "private") {
+        try {
+          await ctx.api.deleteMessage(
+            callbackMessage.chat.id,
+            callbackMessage.message_id,
+          );
+        } catch (error) {
+          logger.debug({ err: error, productId: product.id }, "Unable to remove the previous product message");
+        }
+      }
+      await ctx.reply(details, { parse_mode: "HTML", reply_markup: keyboard });
+      return;
+    }
   }
   await replaceCallbackMessage(ctx, details, { parse_mode: "HTML", reply_markup: keyboard });
+}
+
+async function productTelegramPhoto(imageUrl: string, productId: string) {
+  if (!imageUrl.startsWith("/objects/uploads/")) return imageUrl;
+
+  const file = await objectStorageService.getObjectEntityFile(imageUrl);
+  const [metadata] = await file.getMetadata();
+  const [buffer] = await file.download();
+  const contentType = String(metadata.contentType ?? "");
+  const extension =
+    contentType === "image/png" ? "png" : contentType === "image/webp" ? "webp" : "jpg";
+  return new InputFile(buffer, `product-${productId}.${extension}`);
 }
 
 async function showQuantitySelector(ctx: Context, user: typeof users.$inferSelect, productId: string, requestedQuantity = 1) {

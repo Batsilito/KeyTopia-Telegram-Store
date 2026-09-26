@@ -42,6 +42,8 @@ import type {
   ListPaymentsParams,
   ListProductsParams,
   ListSupportTicketsParams,
+  ManualProductStockInput,
+  ManualProductStockResult,
   Order,
   OrderPage,
   OrderStatusInput,
@@ -49,6 +51,8 @@ import type {
   PaymentPage,
   PaymentRejectionInput,
   Product,
+  ProductImageUploadInput,
+  ProductImageUploadUrl,
   ProductInput,
   ProductPage,
   ProductUpdate,
@@ -972,6 +976,260 @@ export const useDeleteProduct = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getDeleteProductMutationOptions(options));
+    }
+
+export const getGetProductImageUrl = (productId: string,) => {
+
+
+
+
+  return `/api/products/${productId}/image`
+}
+
+/**
+ * @summary Get a product image for authenticated admin preview
+ */
+export const getProductImage = async (productId: string, options?: Parameters<typeof customFetch>[1]): Promise<Blob> => {
+
+  return customFetch<Blob>(getGetProductImageUrl(productId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetProductImageQueryKey = (productId: string,) => {
+    return [
+    `/api/products/${productId}/image`
+    ] as const;
+    }
+
+
+export const getGetProductImageQueryOptions = <TData = Awaited<ReturnType<typeof getProductImage>>, TError = ErrorType<void>>(productId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getProductImage>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetProductImageQueryKey(productId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getProductImage>>> = ({ signal }) => getProductImage(productId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: productId !== null && productId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getProductImage>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetProductImageQueryResult = NonNullable<Awaited<ReturnType<typeof getProductImage>>>
+export type GetProductImageQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get a product image for authenticated admin preview
+ */
+
+export function useGetProductImage<TData = Awaited<ReturnType<typeof getProductImage>>, TError = ErrorType<void>>(
+ productId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getProductImage>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetProductImageQueryOptions(productId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getSetManualProductStockUrl = (productId: string,) => {
+
+
+
+
+  return `/api/products/${productId}/manual-stock`
+}
+
+/**
+ * @summary Set the available stock count for a manual-delivery product
+ */
+export const setManualProductStock = async (productId: string,
+    manualProductStockInput: ManualProductStockInput, options?: Parameters<typeof customFetch>[1]): Promise<ManualProductStockResult> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<ManualProductStockResult>(getSetManualProductStockUrl(productId),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(manualProductStockInput)
+  }
+);}
+
+
+
+
+
+export const getSetManualProductStockMutationKey = () => ['setManualProductStock'] as const;
+
+export const getSetManualProductStockMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setManualProductStock>>, TError,SetManualProductStockMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setManualProductStock>>, TError,SetManualProductStockMutationVariables, TContext> => {
+
+const mutationKey = getSetManualProductStockMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setManualProductStock>>, SetManualProductStockMutationVariables> = (props) => {
+          const {productId,data} = props ?? {};
+
+          return  setManualProductStock(productId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetManualProductStockMutationResult = NonNullable<Awaited<ReturnType<typeof setManualProductStock>>>
+    export type SetManualProductStockMutationBody = BodyType<ManualProductStockInput>
+    export type SetManualProductStockMutationError = ErrorType<void>
+    export type SetManualProductStockMutationVariables = {productId: string;data: BodyType<ManualProductStockInput>}
+
+    /**
+ * @summary Set the available stock count for a manual-delivery product
+ */
+export const useSetManualProductStock = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setManualProductStock>>, TError,SetManualProductStockMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof setManualProductStock>>,
+        TError,
+        SetManualProductStockMutationVariables,
+        TContext
+      > => {
+      return useMutation(getSetManualProductStockMutationOptions(options));
+    }
+
+export const getRequestProductImageUploadUrl = () => {
+
+
+
+
+  return `/api/storage/product-images/upload-url`
+}
+
+/**
+ * @summary Request a short-lived upload URL for a product image
+ */
+export const requestProductImageUpload = async (productImageUploadInput: ProductImageUploadInput, options?: Parameters<typeof customFetch>[1]): Promise<ProductImageUploadUrl> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<ProductImageUploadUrl>(getRequestProductImageUploadUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(productImageUploadInput)
+  }
+);}
+
+
+
+
+
+export const getRequestProductImageUploadMutationKey = () => ['requestProductImageUpload'] as const;
+
+export const getRequestProductImageUploadMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof requestProductImageUpload>>, TError,RequestProductImageUploadMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof requestProductImageUpload>>, TError,RequestProductImageUploadMutationVariables, TContext> => {
+
+const mutationKey = getRequestProductImageUploadMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof requestProductImageUpload>>, RequestProductImageUploadMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  requestProductImageUpload(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RequestProductImageUploadMutationResult = NonNullable<Awaited<ReturnType<typeof requestProductImageUpload>>>
+    export type RequestProductImageUploadMutationBody = BodyType<ProductImageUploadInput>
+    export type RequestProductImageUploadMutationError = ErrorType<void>
+    export type RequestProductImageUploadMutationVariables = {data: BodyType<ProductImageUploadInput>}
+
+    /**
+ * @summary Request a short-lived upload URL for a product image
+ */
+export const useRequestProductImageUpload = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof requestProductImageUpload>>, TError,RequestProductImageUploadMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof requestProductImageUpload>>,
+        TError,
+        RequestProductImageUploadMutationVariables,
+        TContext
+      > => {
+      return useMutation(getRequestProductImageUploadMutationOptions(options));
     }
 
 export const getListInventoryUrl = (params?: ListInventoryParams,) => {
