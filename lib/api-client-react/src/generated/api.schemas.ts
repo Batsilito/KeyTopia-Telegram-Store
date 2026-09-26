@@ -189,6 +189,18 @@ export interface ProductUpdate {
   instructionsAr?: string;
 }
 
+export type DeleteProductResultOutcome = typeof DeleteProductResultOutcome[keyof typeof DeleteProductResultOutcome];
+
+
+export const DeleteProductResultOutcome = {
+  deleted: 'deleted',
+  archived: 'archived',
+} as const;
+
+export interface DeleteProductResult {
+  outcome: DeleteProductResultOutcome;
+}
+
 export interface ManualProductStockInput {
   /**
      * @minimum 0

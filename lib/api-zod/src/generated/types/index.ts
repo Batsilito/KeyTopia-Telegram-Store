@@ -17,6 +17,8 @@ export * from './customer';
 export * from './customerLanguage';
 export * from './customerPage';
 export * from './dashboardOverview';
+export * from './deleteProductResult';
+export * from './deleteProductResultOutcome';
 export * from './deliveryInput';
 export * from './flashSale';
 export * from './flashSaleInput';

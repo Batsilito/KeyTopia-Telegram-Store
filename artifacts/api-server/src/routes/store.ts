@@ -6,6 +6,7 @@ import {
   CreateProductBody,
   CreatePromoCodeBody,
   DeleteProductParams,
+  DeleteProductResponse,
   DeliverOrderBody,
   GetAnalyticsSummaryQueryParams,
   ImportInventoryBody,
@@ -456,7 +457,19 @@ router.delete("/products/:productId", async (req, res): Promise<void> => {
     ]);
 
     if (references.some((rows) => rows.length > 0)) {
-      return { status: "referenced" } as const;
+      await tx
+        .update(products)
+        .set({ active: false, updatedAt: new Date() })
+        .where(eq(products.id, product.id));
+      await tx.insert(auditLogs).values({
+        adminId: admin.id,
+        action: "product_archived",
+        entityType: "product",
+        entityId: product.id,
+        beforeValues: product,
+        afterValues: { active: false, archivedToPreserveHistory: true },
+      });
+      return { status: "archived" } as const;
     }
 
     await tx.insert(auditLogs).values({
@@ -475,13 +488,7 @@ router.delete("/products/:productId", async (req, res): Promise<void> => {
     res.status(404).json({ error: "Product not found" });
     return;
   }
-  if (result.status === "referenced") {
-    res.status(409).json({
-      error: "Products linked to inventory, checkouts, orders, flash sales, or promo codes cannot be deleted. Pause the product to keep its history.",
-    });
-    return;
-  }
-  res.sendStatus(204);
+  res.json(DeleteProductResponse.parse({ outcome: result.status }));
 });
 
 router.get("/inventory/summary", async (req, res) => {

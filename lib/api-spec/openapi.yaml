@@ -180,16 +180,18 @@ paths:
     delete:
       operationId: deleteProduct
       tags: [products]
-      summary: Delete a product with no related records
+      summary: Delete an unreferenced product or archive it when history exists
       parameters:
         - $ref: "#/components/parameters/ProductId"
       responses:
-        "204":
-          description: Product deleted
+        "200":
+          description: Product was deleted or archived to preserve linked history
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteProductResult"
         "404":
           description: Product not found
-        "409":
-          description: Product has related records and cannot be deleted
   /products/{productId}/image:
     get:
       operationId: getProductImage
@@ -845,6 +847,13 @@ components:
         telegramCustomEmojiId: { type: ["string", "null"], maxLength: 32, pattern: "^[0-9]{1,32}$" }
         instructionsEn: { type: string }
         instructionsAr: { type: string }
+    DeleteProductResult:
+      type: object
+      properties:
+        outcome:
+          type: string
+          enum: [deleted, archived]
+      required: [outcome]
     ManualProductStockInput:
       type: object
       properties:

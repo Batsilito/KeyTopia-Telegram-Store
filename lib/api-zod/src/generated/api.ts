@@ -341,13 +341,15 @@ export const UpdateProductResponse = zod.object({
 
 
 /**
- * @summary Delete a product with no related records
+ * @summary Delete an unreferenced product or archive it when history exists
  */
 export const DeleteProductParams = zod.object({
   "productId": zod.coerce.string().uuid()
 })
 
-export const DeleteProductResponse = zod.void()
+export const DeleteProductResponse = zod.object({
+  "outcome": zod.enum(['deleted', 'archived'])
+})
 
 
 /**

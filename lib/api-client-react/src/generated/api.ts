@@ -26,6 +26,7 @@ import type {
   BinanceApiDiagnostics,
   CustomerPage,
   DashboardOverview,
+  DeleteProductResult,
   DeliveryInput,
   FlashSale,
   FlashSaleInput,
@@ -913,11 +914,11 @@ export const getDeleteProductUrl = (productId: string,) => {
 }
 
 /**
- * @summary Delete a product with no related records
+ * @summary Delete an unreferenced product or archive it when history exists
  */
-export const deleteProduct = async (productId: string, options?: Parameters<typeof customFetch>[1]): Promise<void> => {
+export const deleteProduct = async (productId: string, options?: Parameters<typeof customFetch>[1]): Promise<DeleteProductResult> => {
 
-  return customFetch<void>(getDeleteProductUrl(productId),
+  return customFetch<DeleteProductResult>(getDeleteProductUrl(productId),
   {
     ...options,
     method: 'DELETE'
@@ -965,7 +966,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type DeleteProductMutationVariables = {productId: string}
 
     /**
- * @summary Delete a product with no related records
+ * @summary Delete an unreferenced product or archive it when history exists
  */
 export const useDeleteProduct = <TError = ErrorType<void>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteProduct>>, TError,DeleteProductMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}

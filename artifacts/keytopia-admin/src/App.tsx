@@ -256,13 +256,15 @@ function Products() {
       </div> : <EmptyState icon={Package} title="Your catalog is empty" body="Create your first digital subscription product to start selling." action={<Button onClick={() => setModal('new')}><Plus size={15} /> Add product</Button>} />}
     </Card>
     {modal && <ProductModal product={modal === 'new' ? null : query.data?.items.find((p: any) => p.id === modal)} onClose={() => setModal(null)} onSave={(data: any) => modal === 'new' ? create.mutate({ data }, { onSuccess: () => { setModal(null); invalidate(); } }) : update.mutate({ productId: modal, data }, { onSuccess: () => { setModal(null); invalidate(); } })} pending={create.isPending || update.isPending} />}
-    {deleteTarget && <Modal title="Delete product?" onClose={() => { if (!remove.isPending) { setDeleteTarget(null); remove.reset(); } }}>
+    {deleteTarget && <Modal title={remove.data ? "Product removal complete" : "Remove product?"} onClose={() => { if (!remove.isPending) { setDeleteTarget(null); remove.reset(); } }}>
       <div className="space-y-4">
-        <p className="text-sm leading-6 text-muted-foreground">Delete <strong className="text-foreground">{deleteTarget.nameEn}</strong> permanently? Products linked to inventory, checkout sessions, orders, flash sales, or promo codes cannot be deleted so their records stay intact. Pause a product instead if it has history.</p>
+        {remove.data ? <p className="text-sm leading-6 text-muted-foreground" role="status" data-testid="status-delete-product-success">{remove.data.outcome === 'archived' ? <><strong className="text-foreground">{deleteTarget.nameEn}</strong> was removed from sale and archived. Its linked history remains available.</> : <><strong className="text-foreground">{deleteTarget.nameEn}</strong> was permanently deleted.</>}</p> : <p className="text-sm leading-6 text-muted-foreground">Remove <strong className="text-foreground">{deleteTarget.nameEn}</strong> from sale? If it has inventory, checkout, order, flash-sale, or promo records, it will be archived as inactive so its history stays intact. If it has no linked records, it will be permanently deleted.</p>}
         {remove.isError && <div role="alert" className="rounded-lg bg-destructive/10 px-3 py-2.5 text-sm font-bold text-destructive" data-testid="status-delete-product-error">{remove.error.message || 'Product could not be deleted.'}</div>}
         <div className="flex justify-end gap-2">
-          <Button variant="secondary" disabled={remove.isPending} onClick={() => { setDeleteTarget(null); remove.reset(); }}>Cancel</Button>
-          <Button variant="danger" disabled={remove.isPending} onClick={() => remove.mutate({ productId: deleteTarget.id }, { onSuccess: () => { setDeleteTarget(null); remove.reset(); invalidate(); qc.removeQueries({ queryKey: [`/api/products/${deleteTarget.id}`], exact: true }); } })} data-testid="button-confirm-delete-product">{remove.isPending ? 'Deleting...' : 'Delete permanently'}</Button>
+          {remove.data ? <Button variant="secondary" onClick={() => { setDeleteTarget(null); remove.reset(); }}>Done</Button> : <>
+            <Button variant="secondary" disabled={remove.isPending} onClick={() => { setDeleteTarget(null); remove.reset(); }}>Cancel</Button>
+            <Button variant="danger" disabled={remove.isPending} onClick={() => remove.mutate({ productId: deleteTarget.id }, { onSuccess: () => { invalidate(); qc.removeQueries({ queryKey: [`/api/products/${deleteTarget.id}`], exact: true }); } })} data-testid="button-confirm-delete-product">{remove.isPending ? 'Removing...' : 'Confirm removal'}</Button>
+          </>}
         </div>
       </div>
     </Modal>}
