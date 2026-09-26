@@ -33,7 +33,6 @@ export interface StoreSettingsUpdate {
   binanceEnabled?: boolean;
   bybitEnabled?: boolean;
   vodafoneCashEnabled?: boolean;
-  instapayEnabled?: boolean;
   /** @minLength 1 */
   termsVersion?: string;
 }

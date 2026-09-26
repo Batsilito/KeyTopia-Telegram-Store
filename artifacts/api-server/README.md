@@ -62,7 +62,7 @@ The bot supports Binance UID wallet top-ups with automatic polling of the
 authenticated account's Binance Pay transaction history. Buyers enter the
 transaction ID and exact USDT amount; the API verifies the incoming C2C
 transaction against the receiving UID and credits the wallet once. Product checkout payments
-and Bybit, Vodafone Cash, and InstaPay payments remain manual review flows.
+and Bybit and Vodafone Cash payments remain manual review flows.
 Telegram Stars, XTR, Telegram invoices, and card checkout are intentionally not
 implemented.
 

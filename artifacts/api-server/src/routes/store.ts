@@ -1272,7 +1272,6 @@ router.get("/settings", async (req, res) => {
     binanceEnabled: enabled.has("binance"),
     bybitEnabled: enabled.has("bybit"),
     vodafoneCashEnabled: enabled.has("vodafone_cash"),
-    instapayEnabled: enabled.has("instapay"),
     termsVersion: settings.termsVersion,
   });
 });
@@ -1305,7 +1304,6 @@ router.patch("/settings", async (req, res) => {
     ["binance", parsed.data.binanceEnabled],
     ["bybit", parsed.data.bybitEnabled],
     ["vodafone_cash", parsed.data.vodafoneCashEnabled],
-    ["instapay", parsed.data.instapayEnabled],
   ] as const;
   for (const [method, enabled] of methodToggles) {
     if (enabled === undefined) continue;
@@ -1328,7 +1326,6 @@ router.patch("/settings", async (req, res) => {
     binanceEnabled: Boolean(parsed.data.binanceEnabled),
     bybitEnabled: Boolean(parsed.data.bybitEnabled),
     vodafoneCashEnabled: Boolean(parsed.data.vodafoneCashEnabled),
-    instapayEnabled: Boolean(parsed.data.instapayEnabled),
     termsVersion: rows[0].termsVersion,
   });
 });

@@ -24,6 +24,5 @@ export interface StoreSettings {
   binanceEnabled: boolean;
   bybitEnabled: boolean;
   vodafoneCashEnabled: boolean;
-  instapayEnabled: boolean;
   termsVersion: string;
 }

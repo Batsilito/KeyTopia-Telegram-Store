@@ -879,7 +879,6 @@ export const GetStoreSettingsResponse = zod.object({
   "binanceEnabled": zod.boolean(),
   "bybitEnabled": zod.boolean(),
   "vodafoneCashEnabled": zod.boolean(),
-  "instapayEnabled": zod.boolean(),
   "termsVersion": zod.string()
 })
 
@@ -916,7 +915,6 @@ export const UpdateStoreSettingsBody = zod.object({
   "binanceEnabled": zod.boolean().optional(),
   "bybitEnabled": zod.boolean().optional(),
   "vodafoneCashEnabled": zod.boolean().optional(),
-  "instapayEnabled": zod.boolean().optional(),
   "termsVersion": zod.string().min(1).optional()
 })
 
@@ -935,7 +933,6 @@ export const UpdateStoreSettingsResponse = zod.object({
   "binanceEnabled": zod.boolean(),
   "bybitEnabled": zod.boolean(),
   "vodafoneCashEnabled": zod.boolean(),
-  "instapayEnabled": zod.boolean(),
   "termsVersion": zod.string()
 })
 

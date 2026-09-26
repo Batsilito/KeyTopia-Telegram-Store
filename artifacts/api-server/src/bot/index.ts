@@ -254,7 +254,6 @@ function paymentMethodLabel(method: string, language?: BotLanguage) {
 
 function paymentLogoPath(method: string) {
   const filenames: Record<string, string> = {
-    instapay: "instapay-logo.png",
     vodafone_cash: "vodafone-cash-logo.png",
   };
   const filename = filenames[method];
@@ -1189,15 +1188,21 @@ function paymentMethodDescription(method: string, language: BotLanguage) {
       en: "Vodafone Cash transfer instructions are shown after you choose Vodafone Cash.",
       ar: "تظهر تعليمات تحويل Vodafone Cash بعد اختيار Vodafone Cash.",
     },
-    instapay: {
-      en: "InstaPay transfer instructions are shown after you choose InstaPay.",
-      ar: "تظهر تعليمات تحويل InstaPay بعد اختيار InstaPay.",
-    },
   };
   return descriptions[method]?.[language] ?? "";
 }
 
-type CheckoutPaymentMethod = "wallet" | "binance" | "bybit" | "vodafone_cash" | "instapay";
+type CheckoutPaymentMethod = "wallet" | "binance" | "bybit" | "vodafone_cash";
+const checkoutPaymentMethods = new Set<CheckoutPaymentMethod>([
+  "wallet",
+  "binance",
+  "bybit",
+  "vodafone_cash",
+]);
+
+function isCheckoutPaymentMethod(method: string): method is CheckoutPaymentMethod {
+  return checkoutPaymentMethods.has(method as CheckoutPaymentMethod);
+}
 
 const supportDraftUsers = new Set<string>();
 const supportReplyDrafts = new Map<string, string>();
@@ -1445,7 +1450,10 @@ async function showProfile(ctx: Context, user: typeof users.$inferSelect) {
 async function showWalletTopup(ctx: Context, user: typeof users.$inferSelect) {
   if (!(await ensureAccess(ctx, user))) return;
   const language = languageOf(user);
-  const methods = await db.select().from(paymentMethods).where(eq(paymentMethods.enabled, true));
+  const methods = await db
+    .select()
+    .from(paymentMethods)
+    .where(and(eq(paymentMethods.enabled, true), ne(paymentMethods.method, "instapay")));
   const keyboard = new InlineKeyboard();
   for (const method of methods) {
     keyboard.text(paymentMethodLabel(method.method), `wallet:method:${method.method}`).row();
@@ -1463,7 +1471,7 @@ async function showWalletTopup(ctx: Context, user: typeof users.$inferSelect) {
 async function showWalletPaymentMethod(
   ctx: Context,
   user: typeof users.$inferSelect,
-  method: "binance" | "bybit" | "vodafone_cash" | "instapay",
+  method: "binance" | "bybit" | "vodafone_cash",
   amount?: number,
 ) {
   if (!(await ensureAccess(ctx, user))) return;
@@ -2305,7 +2313,10 @@ async function beginCheckout(ctx: Context, user: typeof users.$inferSelect, prod
     await ctx.reply(t(languageOf(user), "outOfStock"));
     return;
   }
-  const methods = await db.select().from(paymentMethods).where(eq(paymentMethods.enabled, true));
+  const methods = await db
+    .select()
+    .from(paymentMethods)
+    .where(and(eq(paymentMethods.enabled, true), ne(paymentMethods.method, "instapay")));
   const language = languageOf(user);
   const keyboard = new InlineKeyboard();
   keyboard
@@ -2516,17 +2527,21 @@ async function showPayment(
   ctx: Context,
   user: typeof users.$inferSelect,
   checkoutId: string,
-  method: CheckoutPaymentMethod,
+  method: string,
 ) {
   const checkout = await db.select().from(checkoutSessions).where(and(eq(checkoutSessions.id, checkoutId), eq(checkoutSessions.userId, user.id), gt(checkoutSessions.expiresAt, new Date()))).limit(1);
   if (!checkout[0]) return;
+  const language = languageOf(user);
+  if (!isCheckoutPaymentMethod(method)) {
+    await replaceCallbackMessage(ctx, t(language, "paymentUnavailable"));
+    return;
+  }
   if (method === "wallet") {
     await payCheckoutWithWallet(ctx, user, checkoutId);
     return;
   }
   await db.update(checkoutSessions).set({ paymentMethod: method }).where(eq(checkoutSessions.id, checkoutId));
   const config = await db.select().from(paymentMethods).where(and(eq(paymentMethods.method, method), eq(paymentMethods.enabled, true))).limit(1);
-  const language = languageOf(user);
   if (!config[0]) {
     await replaceCallbackMessage(ctx, t(language, "paymentUnavailable"));
     return;
@@ -2782,9 +2797,13 @@ export function buildTelegramBot() {
       return;
     }
     if (data.startsWith("wallet:method:")) {
-      const method = data.slice("wallet:method:".length) as "binance" | "bybit" | "vodafone_cash" | "instapay";
+      const method = data.slice("wallet:method:".length);
       if (method === "binance") await beginWalletTopUp(ctx, user);
-      else await showWalletPaymentMethod(ctx, user, method);
+      else if (method === "bybit" || method === "vodafone_cash") {
+        await showWalletPaymentMethod(ctx, user, method);
+      } else {
+        await ctx.reply(t(languageOf(user), "paymentUnavailable"));
+      }
       return;
     }
     if (data === "nav:shop") {
@@ -2849,7 +2868,7 @@ export function buildTelegramBot() {
     }
     if (data.startsWith("method:")) {
       const [, checkoutId, method] = data.split(":");
-      await showPayment(ctx, user, checkoutId, method as CheckoutPaymentMethod);
+      await showPayment(ctx, user, checkoutId, method);
       return;
     }
     if (data.startsWith("paid:")) {
