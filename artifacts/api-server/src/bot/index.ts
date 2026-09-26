@@ -1,4 +1,4 @@
-import { Bot, InlineKeyboard, InputFile, Keyboard, webhookCallback, type Context } from "grammy";
+import { Bot, GrammyError, InlineKeyboard, InputFile, Keyboard, webhookCallback, type Context } from "grammy";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -37,6 +37,7 @@ import {
   VERIFIED_REFERRAL_REWARD_USD,
 } from "../lib/reward-policy";
 import { t, type BotLanguage } from "./locales";
+import { createProductShopButton, isValidTelegramCustomEmojiId } from "./shop-product-button";
 
 export const telegramBotToken = process.env.TELEGRAM_BOT_TOKEN;
 export const telegramBot = telegramBotToken ? new Bot(telegramBotToken) : null;
@@ -48,6 +49,44 @@ const flashSaleReminderAt = new Map<string, number>();
 const BINANCE_POLL_INTERVAL_MS = 5_000;
 const BINANCE_SUBMISSION_RETRY_DELAYS_MS = [250, 1_000, 2_500, 5_000, 10_000, 20_000] as const;
 const verificationAnimationTimers = new Map<string, ReturnType<typeof setInterval>>();
+
+export async function validateTelegramCustomEmojiId(
+  value: string | null | undefined,
+): Promise<string | null> {
+  const id = value?.trim() || null;
+  if (!id) return null;
+  if (!isValidTelegramCustomEmojiId(id)) {
+    throw new Error("Telegram Custom Emoji ID must be a numeric ID.");
+  }
+  if (!telegramBot) return id;
+
+  try {
+    const stickers = await telegramBot.api.getCustomEmojiStickers([id]);
+    if (
+      !stickers.some(
+        (sticker) =>
+          sticker.type === "custom_emoji" && sticker.custom_emoji_id === id,
+      )
+    ) {
+      throw new Error("Telegram did not return a custom emoji for this ID.");
+    }
+  } catch (error) {
+    if (
+      error instanceof GrammyError &&
+      /invalid|not found|cannot find|can't find/i.test(error.description)
+    ) {
+      throw new Error("Telegram could not find that Custom Emoji ID.");
+    }
+    if (error instanceof Error && error.message === "Telegram did not return a custom emoji for this ID.") {
+      throw error;
+    }
+    logger.warn(
+      { err: error },
+      "Unable to validate Telegram Custom Emoji ID; it will be checked when rendering the shop",
+    );
+  }
+  return id;
+}
 
 function languageOf(user: typeof users.$inferSelect): BotLanguage {
   return user.language;
@@ -1784,40 +1823,54 @@ async function replaceCallbackMessage(
     parse_mode?: "HTML";
     reply_markup?: InlineKeyboard | Keyboard;
   } = {},
+  fallbackOptions?: {
+    parse_mode?: "HTML";
+    reply_markup?: InlineKeyboard | Keyboard;
+  },
 ) {
   const message = ctx.callbackQuery?.message;
-  const inlineReplyMarkup =
-    options.reply_markup && "inline_keyboard" in options.reply_markup
-      ? options.reply_markup
-      : undefined;
   if (message) {
-    try {
-      if ("photo" in message) {
-        await ctx.editMessageCaption({
-          caption: text,
-          parse_mode: options.parse_mode,
-          ...(inlineReplyMarkup ? { reply_markup: inlineReplyMarkup } : {}),
-        });
-      } else {
-        await ctx.editMessageText(text, {
-          parse_mode: options.parse_mode,
-          ...(inlineReplyMarkup ? { reply_markup: inlineReplyMarkup } : {}),
-        });
-      }
-      return true;
-    } catch (error) {
-      if (
-        error &&
-        typeof error === "object" &&
-        "description" in error &&
-        String(error.description).includes("message is not modified")
-      ) {
+    const attempts = fallbackOptions ? [options, fallbackOptions] : [options];
+    for (const [index, attempt] of attempts.entries()) {
+      const inlineReplyMarkup =
+        attempt.reply_markup && "inline_keyboard" in attempt.reply_markup
+          ? attempt.reply_markup
+          : undefined;
+      try {
+        if ("photo" in message) {
+          await ctx.editMessageCaption({
+            caption: text,
+            parse_mode: attempt.parse_mode,
+            ...(inlineReplyMarkup ? { reply_markup: inlineReplyMarkup } : {}),
+          });
+        } else {
+          await ctx.editMessageText(text, {
+            parse_mode: attempt.parse_mode,
+            ...(inlineReplyMarkup ? { reply_markup: inlineReplyMarkup } : {}),
+          });
+        }
         return true;
+      } catch (error) {
+        if (
+          error &&
+          typeof error === "object" &&
+          "description" in error &&
+          String(error.description).includes("message is not modified")
+        ) {
+          return true;
+        }
+        if (index === 0 && fallbackOptions) {
+          logger.warn(
+            { err: error },
+            "Telegram rejected shop custom emoji icons; retrying without product icons",
+          );
+        } else {
+          logger.warn({ err: error }, "Unable to edit Telegram callback message; sending replacement");
+        }
       }
-      logger.warn({ err: error }, "Unable to edit Telegram callback message; sending replacement");
     }
   }
-  await ctx.reply(text, options);
+  await ctx.reply(text, fallbackOptions ?? options);
   return false;
 }
 
@@ -1866,44 +1919,76 @@ async function showShop(ctx: Context, user: typeof users.$inferSelect, editMessa
       right.stockType === "unlimited" || (stockByProduct.get(right.id) ?? 0) > 0;
     return Number(leftAvailable) - Number(rightAvailable);
   });
-  const keyboard = new InlineKeyboard();
-  for (const product of sortedRows) {
-    const name = language === "ar" ? product.nameAr : product.nameEn;
-    const sale = activeSaleByProduct.get(product.id) ?? null;
-    const price = effectiveProductPrice(product, sale);
-    const isUnlimited = product.stockType === "unlimited";
-    const quantity = isUnlimited ? "∞" : String(stockByProduct.get(product.id) ?? 0);
-    const inStock = isUnlimited || quantity !== "0";
-    keyboard
-      .text(
-        `${name} | ${price} USDT${sale ? " ⚡" : ""} | ${inStock ? `📦 ${quantity}` : t(language, "outOfStock")}`,
-        `product:${product.id}`,
-      )
-      [inStock ? "success" : "danger"]()
-      .row();
-  }
-  keyboard.text(t(language, "refreshStock"), "shop:refresh").row();
   const channel = await channelConfigured();
-  if (channel) {
-    keyboard.url(
-      t(language, "channel"),
-      `https://t.me/${channel.replace(/^@/, "")}`,
-    ).row();
-  } else {
-    keyboard.text(t(language, "channel"), "nav:channel").row();
-  }
-  keyboard
-    .text(t(language, "orderHistory"), "nav:orders")
-    .text(t(language, "wallet"), "nav:wallet")
-    .row()
-    .text(t(language, "mainMenu"), "nav:home");
+  const buildKeyboard = (includeProductIcons: boolean) => {
+    const keyboard = new InlineKeyboard();
+    for (const product of sortedRows) {
+      const sale = activeSaleByProduct.get(product.id) ?? null;
+      const price = effectiveProductPrice(product, sale);
+      const isUnlimited = product.stockType === "unlimited";
+      const quantity = isUnlimited ? "∞" : String(stockByProduct.get(product.id) ?? 0);
+      const inStock = isUnlimited || quantity !== "0";
+      const button = createProductShopButton(
+        {
+          id: product.id,
+          nameEn: product.nameEn,
+          nameAr: product.nameAr,
+          price,
+          quantity,
+          inStock,
+          outOfStockLabel: t(language, "outOfStock"),
+          isFlashSale: Boolean(sale),
+          telegramCustomEmojiId: product.telegramCustomEmojiId,
+        },
+        language,
+        includeProductIcons,
+      );
+      keyboard.add(button)[inStock ? "success" : "danger"]().row();
+    }
+    keyboard.text(t(language, "refreshStock"), "shop:refresh").row();
+    if (channel) {
+      keyboard.url(
+        t(language, "channel"),
+        `https://t.me/${channel.replace(/^@/, "")}`,
+      ).row();
+    } else {
+      keyboard.text(t(language, "channel"), "nav:channel").row();
+    }
+    keyboard
+      .text(t(language, "orderHistory"), "nav:orders")
+      .text(t(language, "wallet"), "nav:wallet")
+      .row()
+      .text(t(language, "mainMenu"), "nav:home");
+    return keyboard;
+  };
+  const keyboard = buildKeyboard(true);
+  const hasProductIcons = sortedRows.some(
+    (product) =>
+      product.telegramCustomEmojiId &&
+      isValidTelegramCustomEmojiId(product.telegramCustomEmojiId),
+  );
+  const fallbackKeyboard = hasProductIcons ? buildKeyboard(false) : undefined;
 
   const text = "\u2060";
 
   if (editMessage && ctx.callbackQuery) {
-    await replaceCallbackMessage(ctx, text, { reply_markup: keyboard });
+    await replaceCallbackMessage(
+      ctx,
+      text,
+      { reply_markup: keyboard },
+      fallbackKeyboard ? { reply_markup: fallbackKeyboard } : undefined,
+    );
   } else {
-    await ctx.reply(text, { reply_markup: keyboard });
+    try {
+      await ctx.reply(text, { reply_markup: keyboard });
+    } catch (error) {
+      if (!fallbackKeyboard) throw error;
+      logger.warn(
+        { err: error },
+        "Telegram rejected shop custom emoji icons; retrying without product icons",
+      );
+      await ctx.reply(text, { reply_markup: fallbackKeyboard });
+    }
   }
 }
 

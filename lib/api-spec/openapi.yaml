@@ -718,10 +718,11 @@ components:
         availableStock: { type: integer }
         lowStockThreshold: { type: integer }
         imageUrl: { type: ["string", "null"] }
+        telegramCustomEmojiId: { type: ["string", "null"], maxLength: 32, pattern: "^[0-9]{1,32}$" }
         instructionsEn: { type: string }
         instructionsAr: { type: string }
         createdAt: { type: string, format: date-time }
-      required: [id, nameEn, nameAr, duration, warranty, priceUsd, deliveryType, stockType, active, displayStock, availableStock, lowStockThreshold, imageUrl, instructionsEn, instructionsAr, createdAt]
+      required: [id, nameEn, nameAr, duration, warranty, priceUsd, deliveryType, stockType, active, displayStock, availableStock, lowStockThreshold, imageUrl, telegramCustomEmojiId, instructionsEn, instructionsAr, createdAt]
     ProductInput:
       type: object
       properties:
@@ -736,6 +737,7 @@ components:
         displayStock: { type: boolean }
         lowStockThreshold: { type: integer, minimum: 0 }
         imageUrl: { type: ["string", "null"] }
+        telegramCustomEmojiId: { type: ["string", "null"], maxLength: 32, pattern: "^[0-9]{1,32}$" }
         instructionsEn: { type: string }
         instructionsAr: { type: string }
       required: [nameEn, nameAr, duration, warranty, priceUsd, deliveryType, stockType, active, displayStock, lowStockThreshold, instructionsEn, instructionsAr]
@@ -753,6 +755,7 @@ components:
         displayStock: { type: boolean }
         lowStockThreshold: { type: integer, minimum: 0 }
         imageUrl: { type: ["string", "null"] }
+        telegramCustomEmojiId: { type: ["string", "null"], maxLength: 32, pattern: "^[0-9]{1,32}$" }
         instructionsEn: { type: string }
         instructionsAr: { type: string }
     ProductPage:

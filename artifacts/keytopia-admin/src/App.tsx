@@ -146,9 +146,34 @@ function Products() {
 }
 
 function ProductModal({ product, onClose, onSave, pending }: { product: any; onClose: () => void; onSave: (data: any) => void; pending: boolean }) {
-  const [form, setForm] = useState<any>(product ? { ...product } : { nameEn: '', nameAr: '', duration: '30 days', warranty: '7 days', priceUsd: 0, deliveryType: 'automatic', stockType: 'limited', active: true, displayStock: true, lowStockThreshold: 5, instructionsEn: '', instructionsAr: '', imageUrl: null });
+  const [form, setForm] = useState<any>(product ? { ...product } : { nameEn: '', nameAr: '', duration: '30 days', warranty: '7 days', priceUsd: 0, deliveryType: 'automatic', stockType: 'limited', active: true, displayStock: true, lowStockThreshold: 5, instructionsEn: '', instructionsAr: '', imageUrl: null, telegramCustomEmojiId: null });
   const set = (key: string, value: any) => setForm((current: any) => ({ ...current, [key]: value }));
-  return <Modal title={product ? 'Edit product' : 'Add product'} onClose={onClose}><div className="grid gap-4 md:grid-cols-2"><Field label="Name (English)"><Input value={form.nameEn} onChange={(e) => set('nameEn', e.target.value)} data-testid="input-product-name-en" /></Field><Field label="Name (Arabic)"><Input value={form.nameAr} onChange={(e) => set('nameAr', e.target.value)} data-testid="input-product-name-ar" /></Field><Field label="Duration"><Input value={form.duration} onChange={(e) => set('duration', e.target.value)} /></Field><Field label="Warranty"><Input value={form.warranty} onChange={(e) => set('warranty', e.target.value)} /></Field><Field label="Price (USD)"><Input type="number" min="0" value={form.priceUsd} onChange={(e) => set('priceUsd', Number(e.target.value))} data-testid="input-product-price" /></Field><Field label="Delivery type"><Select value={form.deliveryType} onChange={(e) => set('deliveryType', e.target.value)}><option value="automatic">Automatic</option><option value="manual">Manual</option></Select></Field><Field label="Stock type"><Select value={form.stockType} onChange={(e) => set('stockType', e.target.value)}><option value="limited">Limited</option><option value="unlimited">Unlimited</option></Select></Field><Field label="Low stock threshold"><Input type="number" min="0" value={form.lowStockThreshold} onChange={(e) => set('lowStockThreshold', Number(e.target.value))} /></Field></div><div className="mt-4 grid gap-4"><Field label="Instructions (English)"><Textarea value={form.instructionsEn} onChange={(e) => set('instructionsEn', e.target.value)} /></Field><Field label="Instructions (Arabic)"><Textarea value={form.instructionsAr} onChange={(e) => set('instructionsAr', e.target.value)} /></Field></div><div className="sticky bottom-0 mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-border bg-card/95 pt-4 backdrop-blur"><label className="flex items-center gap-2 text-sm font-bold"><input type="checkbox" checked={form.active} onChange={(e) => set('active', e.target.checked)} /> Product is active</label><div className="flex gap-2"><Button variant="secondary" onClick={onClose}>Cancel</Button><Button disabled={!form.nameEn.trim() || !form.nameAr.trim() || pending} onClick={() => onSave({ ...form, priceUsd: Number(form.priceUsd), lowStockThreshold: Number(form.lowStockThreshold) })} data-testid="button-save-product"><Check size={15} /> Save product</Button></div></div></Modal>;
+  return <Modal title={product ? 'Edit product' : 'Add product'} onClose={onClose}>
+    <div className="grid gap-4 md:grid-cols-2">
+      <Field label="Name (English)"><Input value={form.nameEn} onChange={(e) => set('nameEn', e.target.value)} data-testid="input-product-name-en" /></Field>
+      <Field label="Name (Arabic)"><Input value={form.nameAr} onChange={(e) => set('nameAr', e.target.value)} data-testid="input-product-name-ar" /></Field>
+      <Field label="Duration"><Input value={form.duration} onChange={(e) => set('duration', e.target.value)} /></Field>
+      <Field label="Warranty"><Input value={form.warranty} onChange={(e) => set('warranty', e.target.value)} /></Field>
+      <Field label="Price (USD)"><Input type="number" min="0" value={form.priceUsd} onChange={(e) => set('priceUsd', Number(e.target.value))} data-testid="input-product-price" /></Field>
+      <Field label="Telegram Custom Emoji ID" hint="Optional numeric ID; leave blank for a normal shop button.">
+        <Input value={form.telegramCustomEmojiId ?? ''} onChange={(e) => set('telegramCustomEmojiId', e.target.value)} placeholder="Custom Emoji ID" data-testid="input-product-custom-emoji-id" />
+      </Field>
+      <Field label="Delivery type"><Select value={form.deliveryType} onChange={(e) => set('deliveryType', e.target.value)}><option value="automatic">Automatic</option><option value="manual">Manual</option></Select></Field>
+      <Field label="Stock type"><Select value={form.stockType} onChange={(e) => set('stockType', e.target.value)}><option value="limited">Limited</option><option value="unlimited">Unlimited</option></Select></Field>
+      <Field label="Low stock threshold"><Input type="number" min="0" value={form.lowStockThreshold} onChange={(e) => set('lowStockThreshold', Number(e.target.value))} /></Field>
+    </div>
+    <div className="mt-4 grid gap-4">
+      <Field label="Instructions (English)"><Textarea value={form.instructionsEn} onChange={(e) => set('instructionsEn', e.target.value)} /></Field>
+      <Field label="Instructions (Arabic)"><Textarea value={form.instructionsAr} onChange={(e) => set('instructionsAr', e.target.value)} /></Field>
+    </div>
+    <div className="sticky bottom-0 mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-border bg-card/95 pt-4 backdrop-blur">
+      <label className="flex items-center gap-2 text-sm font-bold"><input type="checkbox" checked={form.active} onChange={(e) => set('active', e.target.checked)} /> Product is active</label>
+      <div className="flex gap-2">
+        <Button variant="secondary" onClick={onClose}>Cancel</Button>
+        <Button disabled={!form.nameEn.trim() || !form.nameAr.trim() || pending} onClick={() => onSave({ ...form, priceUsd: Number(form.priceUsd), lowStockThreshold: Number(form.lowStockThreshold), telegramCustomEmojiId: form.telegramCustomEmojiId?.trim() || null })} data-testid="button-save-product"><Check size={15} /> Save product</Button>
+      </div>
+    </div>
+  </Modal>;
 }
 
 function normalizeInventoryLines(value: string) {

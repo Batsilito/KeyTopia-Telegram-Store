@@ -88,6 +88,12 @@ export interface Product {
   lowStockThreshold: number;
   /** @nullable */
   imageUrl: string | null;
+  /**
+     * @maxLength 32
+     * @nullable
+     * @pattern ^[0-9]{1,32}$
+     */
+  telegramCustomEmojiId: string | null;
   instructionsEn: string;
   instructionsAr: string;
   createdAt: string;
@@ -128,6 +134,12 @@ export interface ProductInput {
   lowStockThreshold: number;
   /** @nullable */
   imageUrl?: string | null;
+  /**
+     * @maxLength 32
+     * @nullable
+     * @pattern ^[0-9]{1,32}$
+     */
+  telegramCustomEmojiId?: string | null;
   instructionsEn: string;
   instructionsAr: string;
 }
@@ -167,6 +179,12 @@ export interface ProductUpdate {
   lowStockThreshold?: number;
   /** @nullable */
   imageUrl?: string | null;
+  /**
+     * @maxLength 32
+     * @nullable
+     * @pattern ^[0-9]{1,32}$
+     */
+  telegramCustomEmojiId?: string | null;
   instructionsEn?: string;
   instructionsAr?: string;
 }

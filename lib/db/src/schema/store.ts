@@ -150,6 +150,7 @@ export const products = pgTable("products", {
   instructionsEn: text("instructions_en").default("").notNull(),
   instructionsAr: text("instructions_ar").default("").notNull(),
   imageUrl: text("image_url"),
+  telegramCustomEmojiId: text("telegram_custom_emoji_id"),
   stockType: stockTypeEnum("stock_type").default("unlimited").notNull(),
   deliveryType: deliveryTypeEnum("delivery_type").default("manual").notNull(),
   active: boolean("active").default(true).notNull(),

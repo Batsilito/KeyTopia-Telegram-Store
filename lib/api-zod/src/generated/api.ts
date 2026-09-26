@@ -146,6 +146,12 @@ export const ListProductsQueryParams = zod.object({
   "deliveryType": zod.enum(['automatic', 'manual']).optional()
 })
 
+export const listProductsResponseItemsItemTelegramCustomEmojiIdMax = 32;
+
+
+export const listProductsResponseItemsItemTelegramCustomEmojiIdRegExp = new RegExp('^[0-9]{1,32}$');
+
+
 export const ListProductsResponse = zod.object({
   "items": zod.array(zod.object({
   "id": zod.string().uuid(),
@@ -161,6 +167,7 @@ export const ListProductsResponse = zod.object({
   "availableStock": zod.number().int(),
   "lowStockThreshold": zod.number().int(),
   "imageUrl": zod.string().nullable(),
+  "telegramCustomEmojiId": zod.string().max(listProductsResponseItemsItemTelegramCustomEmojiIdMax).regex(listProductsResponseItemsItemTelegramCustomEmojiIdRegExp).nullable(),
   "instructionsEn": zod.string(),
   "instructionsAr": zod.string(),
   "createdAt": zod.coerce.date()
@@ -182,6 +189,10 @@ export const createProductBodyPriceUsdMin = 0;
 
 export const createProductBodyLowStockThresholdMin = 0;
 
+export const createProductBodyTelegramCustomEmojiIdMax = 32;
+
+
+export const createProductBodyTelegramCustomEmojiIdRegExp = new RegExp('^[0-9]{1,32}$');
 
 
 export const CreateProductBody = zod.object({
@@ -196,9 +207,16 @@ export const CreateProductBody = zod.object({
   "displayStock": zod.boolean(),
   "lowStockThreshold": zod.number().int().min(createProductBodyLowStockThresholdMin),
   "imageUrl": zod.string().nullish(),
+  "telegramCustomEmojiId": zod.string().max(createProductBodyTelegramCustomEmojiIdMax).regex(createProductBodyTelegramCustomEmojiIdRegExp).nullish(),
   "instructionsEn": zod.string(),
   "instructionsAr": zod.string()
 })
+
+export const createProductResponseTelegramCustomEmojiIdMax = 32;
+
+
+export const createProductResponseTelegramCustomEmojiIdRegExp = new RegExp('^[0-9]{1,32}$');
+
 
 export const CreateProductResponse = zod.object({
   "id": zod.string().uuid(),
@@ -214,6 +232,7 @@ export const CreateProductResponse = zod.object({
   "availableStock": zod.number().int(),
   "lowStockThreshold": zod.number().int(),
   "imageUrl": zod.string().nullable(),
+  "telegramCustomEmojiId": zod.string().max(createProductResponseTelegramCustomEmojiIdMax).regex(createProductResponseTelegramCustomEmojiIdRegExp).nullable(),
   "instructionsEn": zod.string(),
   "instructionsAr": zod.string(),
   "createdAt": zod.coerce.date()
@@ -226,6 +245,12 @@ export const CreateProductResponse = zod.object({
 export const GetProductParams = zod.object({
   "productId": zod.coerce.string().uuid()
 })
+
+export const getProductResponseTelegramCustomEmojiIdMax = 32;
+
+
+export const getProductResponseTelegramCustomEmojiIdRegExp = new RegExp('^[0-9]{1,32}$');
+
 
 export const GetProductResponse = zod.object({
   "id": zod.string().uuid(),
@@ -241,6 +266,7 @@ export const GetProductResponse = zod.object({
   "availableStock": zod.number().int(),
   "lowStockThreshold": zod.number().int(),
   "imageUrl": zod.string().nullable(),
+  "telegramCustomEmojiId": zod.string().max(getProductResponseTelegramCustomEmojiIdMax).regex(getProductResponseTelegramCustomEmojiIdRegExp).nullable(),
   "instructionsEn": zod.string(),
   "instructionsAr": zod.string(),
   "createdAt": zod.coerce.date()
@@ -262,6 +288,10 @@ export const updateProductBodyPriceUsdMin = 0;
 
 export const updateProductBodyLowStockThresholdMin = 0;
 
+export const updateProductBodyTelegramCustomEmojiIdMax = 32;
+
+
+export const updateProductBodyTelegramCustomEmojiIdRegExp = new RegExp('^[0-9]{1,32}$');
 
 
 export const UpdateProductBody = zod.object({
@@ -276,9 +306,16 @@ export const UpdateProductBody = zod.object({
   "displayStock": zod.boolean().optional(),
   "lowStockThreshold": zod.number().int().min(updateProductBodyLowStockThresholdMin).optional(),
   "imageUrl": zod.string().nullish(),
+  "telegramCustomEmojiId": zod.string().max(updateProductBodyTelegramCustomEmojiIdMax).regex(updateProductBodyTelegramCustomEmojiIdRegExp).nullish(),
   "instructionsEn": zod.string().optional(),
   "instructionsAr": zod.string().optional()
 })
+
+export const updateProductResponseTelegramCustomEmojiIdMax = 32;
+
+
+export const updateProductResponseTelegramCustomEmojiIdRegExp = new RegExp('^[0-9]{1,32}$');
+
 
 export const UpdateProductResponse = zod.object({
   "id": zod.string().uuid(),
@@ -294,6 +331,7 @@ export const UpdateProductResponse = zod.object({
   "availableStock": zod.number().int(),
   "lowStockThreshold": zod.number().int(),
   "imageUrl": zod.string().nullable(),
+  "telegramCustomEmojiId": zod.string().max(updateProductResponseTelegramCustomEmojiIdMax).regex(updateProductResponseTelegramCustomEmojiIdRegExp).nullable(),
   "instructionsEn": zod.string(),
   "instructionsAr": zod.string(),
   "createdAt": zod.coerce.date()

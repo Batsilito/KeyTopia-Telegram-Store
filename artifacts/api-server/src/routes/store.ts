@@ -72,6 +72,7 @@ import {
   processTelegramPaymentNotifications,
   sendAdminTelegramTest,
   sendSupportReply,
+  validateTelegramCustomEmojiId,
 } from "../bot";
 import {
   manuallyConfirmWalletTopUp,
@@ -140,6 +141,7 @@ function productView(product: typeof products.$inferSelect, availableStock = 0) 
     availableStock,
     lowStockThreshold: product.lowStockThreshold,
     imageUrl: product.imageUrl,
+    telegramCustomEmojiId: product.telegramCustomEmojiId,
     instructionsEn: product.instructionsEn,
     instructionsAr: product.instructionsAr,
     createdAt: product.createdAt.toISOString(),
@@ -311,16 +313,25 @@ router.post("/products", async (req, res) => {
   if (!requireSuperAdmin(admin, res)) return;
   const parsed = CreateProductBody.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid product" });
+  let telegramCustomEmojiId: string | null;
+  try {
+    telegramCustomEmojiId = await validateTelegramCustomEmojiId(
+      parsed.data.telegramCustomEmojiId,
+    );
+  } catch {
+    return res.status(400).json({ error: "Invalid Telegram Custom Emoji ID" });
+  }
+  const productData = { ...parsed.data, telegramCustomEmojiId };
   const row = await db
     .insert(products)
-    .values({ ...parsed.data, priceUsd: String(parsed.data.priceUsd) })
+    .values({ ...productData, priceUsd: String(parsed.data.priceUsd) })
     .returning();
   await db.insert(auditLogs).values({
     adminId: admin.id,
     action: "product_created",
     entityType: "product",
     entityId: row[0].id,
-    afterValues: parsed.data,
+    afterValues: productData,
   });
   if (row[0].active) void broadcastNewProduct(row[0]);
   res.status(201).json(productView(row[0]));
@@ -343,6 +354,15 @@ router.patch("/products/:productId", async (req, res) => {
   const updateData: Partial<typeof products.$inferInsert> = {
     updatedAt: new Date(),
   };
+  if (parsed.data.telegramCustomEmojiId !== undefined) {
+    try {
+      updateData.telegramCustomEmojiId = await validateTelegramCustomEmojiId(
+        parsed.data.telegramCustomEmojiId,
+      );
+    } catch {
+      return res.status(400).json({ error: "Invalid Telegram Custom Emoji ID" });
+    }
+  }
   if (parsed.data.nameEn !== undefined) updateData.nameEn = parsed.data.nameEn;
   if (parsed.data.nameAr !== undefined) updateData.nameAr = parsed.data.nameAr;
   if (parsed.data.duration !== undefined) updateData.duration = parsed.data.duration;
