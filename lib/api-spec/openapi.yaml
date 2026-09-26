@@ -176,6 +176,19 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Product"
+    delete:
+      operationId: deleteProduct
+      tags: [products]
+      summary: Delete a product with no related records
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      responses:
+        "204":
+          description: Product deleted
+        "404":
+          description: Product not found
+        "409":
+          description: Product has related records and cannot be deleted
   /inventory:
     get:
       operationId: listInventory

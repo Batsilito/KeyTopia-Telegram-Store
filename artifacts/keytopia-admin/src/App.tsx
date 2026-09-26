@@ -6,12 +6,12 @@ import {
   Activity, Archive, ArrowDownRight, ArrowUpRight, BarChart3, Bell, Boxes, Check, ChevronDown,
   CircleDollarSign, ClipboardList, Clock3, CreditCard, Database, FileClock, Filter, Gauge,
   FileSpreadsheet, Headphones, KeyRound, LayoutDashboard, LogOut, Menu, Package, Percent, Plus, RefreshCw,
-  Search, Settings2, ShieldCheck, ShoppingBag, SlidersHorizontal, Sparkles, Tag, Ticket,
+  Search, Settings2, ShieldCheck, ShoppingBag, SlidersHorizontal, Sparkles, Tag, Ticket, Trash2,
   Truck, UserRound, Users, X, type LucideIcon,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import {
-  useAdminLogin, useAdminLogout, useConfirmPayment, useCreateFlashSale, useCreateProduct,
+  useAdminLogin, useAdminLogout, useConfirmPayment, useCreateFlashSale, useCreateProduct, useDeleteProduct,
   useCreatePromoCode, useDeliverOrder, useDisableInventory, useGetAdminSession,
   useGetAnalyticsSummary, useGetDashboardOverview, useGetInventorySummary, useGetStoreSettings,
   useImportInventory, useListCustomers, useListFlashSales, useListInventory, useListOrders,
@@ -228,9 +228,44 @@ function Payments() {
 
 function Products() {
   const [status, setStatus] = useState<any>('all'); const [modal, setModal] = useState<'new' | string | null>(null);
-  const query = useListProducts({ page: 1, pageSize: 50, status }); const create = useCreateProduct(); const update = useUpdateProduct(); const qc = useQueryClient();
-  const invalidate = () => qc.invalidateQueries({ queryKey: getListProductsQueryKey({ page: 1, pageSize: 50, status }) });
-  return <div className="animate-rise"><PageIntro eyebrow="Catalog control" title="Products" description="Shape the storefront catalog, pricing, delivery behavior, and stock visibility." action={<Button onClick={() => setModal('new')} data-testid="button-new-product"><Plus size={16} /> Add product</Button>} /><div className="mb-4 flex items-center gap-2">{['all', 'active', 'inactive'].map((item) => <button key={item} className={`rounded-full px-3 py-1.5 text-xs font-extrabold ${status === item ? 'bg-foreground text-background' : 'bg-muted text-muted-foreground'}`} onClick={() => setStatus(item)} data-testid={`button-product-filter-${item}`}>{titleCase(item)}</button>)}</div><Card>{query.isLoading ? <LoadingBlock /> : query.isError ? <ErrorState retry={() => query.refetch()} /> : query.data?.items.length ? <div className="grid gap-px bg-border md:grid-cols-2 xl:grid-cols-3">{query.data.items.map((product: any) => <div key={product.id} className="bg-card p-5 transition hover:bg-muted/30" data-testid={`card-product-${product.id}`}><div className="flex items-start justify-between"><div className="grid h-11 w-11 place-items-center rounded-2xl bg-primary/10 text-primary"><Package size={19} /></div><Badge tone={product.active ? 'green' : 'neutral'}>{product.active ? 'Active' : 'Inactive'}</Badge></div><h3 className="mt-5 font-extrabold">{product.nameEn}</h3><p className="mt-1 text-xs text-muted-foreground">{product.duration} · Automatic delivery</p><div className="mt-5 flex items-end justify-between"><span className="font-mono text-xl font-bold">{money(product.priceUsd)}</span><span className={`text-xs font-bold ${product.stockType === 'unlimited' || product.availableStock > product.lowStockThreshold ? 'text-primary' : 'text-destructive'}`}>{product.stockType === 'unlimited' ? 'Unlimited stock' : `${product.availableStock} available`}</span></div><div className="mt-5 flex gap-2 border-t border-border pt-4"><Button variant="secondary" className="flex-1 text-xs" onClick={() => setModal(product.id)} data-testid={`button-edit-product-${product.id}`}><Settings2 size={14} /> Edit product</Button><Button variant="quiet" className="px-2 text-xs" onClick={() => update.mutate({ productId: product.id, data: { active: !product.active } }, { onSuccess: invalidate })} disabled={update.isPending} data-testid={`button-toggle-product-${product.id}`}>{product.active ? 'Pause' : 'Activate'}</Button></div></div>)}</div> : <EmptyState icon={Package} title="Your catalog is empty" body="Create your first digital subscription product to start selling." action={<Button onClick={() => setModal('new')}><Plus size={15} /> Add product</Button>} />}</Card>{modal && <ProductModal product={modal === 'new' ? null : query.data?.items.find((p: any) => p.id === modal)} onClose={() => setModal(null)} onSave={(data: any) => modal === 'new' ? create.mutate({ data }, { onSuccess: () => { setModal(null); invalidate(); } }) : update.mutate({ productId: modal, data }, { onSuccess: () => { setModal(null); invalidate(); } })} pending={create.isPending || update.isPending} />}</div>;
+  const [deleteTarget, setDeleteTarget] = useState<any>(null);
+  const query = useListProducts({ page: 1, pageSize: 50, status });
+  const create = useCreateProduct();
+  const update = useUpdateProduct();
+  const remove = useDeleteProduct();
+  const qc = useQueryClient();
+  const invalidate = () => qc.invalidateQueries({ queryKey: getListProductsQueryKey() });
+
+  return <div className="animate-rise">
+    <PageIntro eyebrow="Catalog control" title="Products" description="Shape the storefront catalog, pricing, delivery behavior, and stock visibility." action={<Button onClick={() => setModal('new')} data-testid="button-new-product"><Plus size={16} /> Add product</Button>} />
+    <div className="mb-4 flex items-center gap-2">{['all', 'active', 'inactive'].map((item) => <button key={item} className={`rounded-full px-3 py-1.5 text-xs font-extrabold ${status === item ? 'bg-foreground text-background' : 'bg-muted text-muted-foreground'}`} onClick={() => setStatus(item)} data-testid={`button-product-filter-${item}`}>{titleCase(item)}</button>)}</div>
+    <Card>
+      {query.isLoading ? <LoadingBlock /> : query.isError ? <ErrorState retry={() => query.refetch()} /> : query.data?.items.length ? <div className="grid gap-px bg-border md:grid-cols-2 xl:grid-cols-3">
+        {query.data.items.map((product: any) => <div key={product.id} className="bg-card p-5 transition hover:bg-muted/30" data-testid={`card-product-${product.id}`}>
+          <div className="flex items-start justify-between"><div className="grid h-11 w-11 place-items-center rounded-2xl bg-primary/10 text-primary"><Package size={19} /></div><Badge tone={product.active ? 'green' : 'neutral'}>{product.active ? 'Active' : 'Inactive'}</Badge></div>
+          <h3 className="mt-5 font-extrabold">{product.nameEn}</h3>
+          <p className="mt-1 text-xs text-muted-foreground">{product.duration} · Automatic delivery</p>
+          <div className="mt-5 flex items-end justify-between"><span className="font-mono text-xl font-bold">{money(product.priceUsd)}</span><span className={`text-xs font-bold ${product.stockType === 'unlimited' || product.availableStock > product.lowStockThreshold ? 'text-primary' : 'text-destructive'}`}>{product.stockType === 'unlimited' ? 'Unlimited stock' : `${product.availableStock} available`}</span></div>
+          <div className="mt-5 flex flex-wrap gap-2 border-t border-border pt-4">
+            <Button variant="secondary" className="flex-1 text-xs" onClick={() => setModal(product.id)} data-testid={`button-edit-product-${product.id}`}><Settings2 size={14} /> Edit product</Button>
+            <Button variant="quiet" className="px-2 text-xs" onClick={() => update.mutate({ productId: product.id, data: { active: !product.active } }, { onSuccess: invalidate })} disabled={update.isPending} data-testid={`button-toggle-product-${product.id}`}>{product.active ? 'Pause' : 'Activate'}</Button>
+            <Button variant="quiet" className="px-2 text-xs text-destructive" onClick={() => { remove.reset(); setDeleteTarget(product); }} aria-label={`Delete ${product.nameEn}`} data-testid={`button-delete-product-${product.id}`}><Trash2 size={14} /> Delete</Button>
+          </div>
+        </div>)}
+      </div> : <EmptyState icon={Package} title="Your catalog is empty" body="Create your first digital subscription product to start selling." action={<Button onClick={() => setModal('new')}><Plus size={15} /> Add product</Button>} />}
+    </Card>
+    {modal && <ProductModal product={modal === 'new' ? null : query.data?.items.find((p: any) => p.id === modal)} onClose={() => setModal(null)} onSave={(data: any) => modal === 'new' ? create.mutate({ data }, { onSuccess: () => { setModal(null); invalidate(); } }) : update.mutate({ productId: modal, data }, { onSuccess: () => { setModal(null); invalidate(); } })} pending={create.isPending || update.isPending} />}
+    {deleteTarget && <Modal title="Delete product?" onClose={() => { if (!remove.isPending) { setDeleteTarget(null); remove.reset(); } }}>
+      <div className="space-y-4">
+        <p className="text-sm leading-6 text-muted-foreground">Delete <strong className="text-foreground">{deleteTarget.nameEn}</strong> permanently? Products linked to inventory, checkout sessions, orders, flash sales, or promo codes cannot be deleted so their records stay intact. Pause a product instead if it has history.</p>
+        {remove.isError && <div role="alert" className="rounded-lg bg-destructive/10 px-3 py-2.5 text-sm font-bold text-destructive" data-testid="status-delete-product-error">{remove.error.message || 'Product could not be deleted.'}</div>}
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" disabled={remove.isPending} onClick={() => { setDeleteTarget(null); remove.reset(); }}>Cancel</Button>
+          <Button variant="danger" disabled={remove.isPending} onClick={() => remove.mutate({ productId: deleteTarget.id }, { onSuccess: () => { setDeleteTarget(null); remove.reset(); invalidate(); qc.removeQueries({ queryKey: [`/api/products/${deleteTarget.id}`], exact: true }); } })} data-testid="button-confirm-delete-product">{remove.isPending ? 'Deleting...' : 'Delete permanently'}</Button>
+        </div>
+      </div>
+    </Modal>}
+  </div>;
 }
 
 function ProductModal({ product, onClose, onSave, pending }: { product: any; onClose: () => void; onSave: (data: any) => void; pending: boolean }) {

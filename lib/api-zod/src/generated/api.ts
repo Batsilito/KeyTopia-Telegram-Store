@@ -341,6 +341,16 @@ export const UpdateProductResponse = zod.object({
 
 
 /**
+ * @summary Delete a product with no related records
+ */
+export const DeleteProductParams = zod.object({
+  "productId": zod.coerce.string().uuid()
+})
+
+export const DeleteProductResponse = zod.void()
+
+
+/**
  * @summary List inventory items
  */
 export const listInventoryQueryPageDefault = 1;

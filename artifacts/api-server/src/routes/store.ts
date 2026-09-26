@@ -5,6 +5,7 @@ import {
   CreateFlashSaleBody,
   CreateProductBody,
   CreatePromoCodeBody,
+  DeleteProductParams,
   DeliverOrderBody,
   GetAnalyticsSummaryQueryParams,
   ImportInventoryBody,
@@ -418,6 +419,68 @@ router.patch("/products/:productId", async (req, res) => {
     void broadcastProductPriceChange(product, previousPriceUsd);
   }
   res.json(productView(product, stock.get(product.id) ?? 0));
+});
+
+router.delete("/products/:productId", async (req, res): Promise<void> => {
+  const admin = await requireAdmin(req, res);
+  if (!requireSuperAdmin(admin, res)) return;
+
+  const params = DeleteProductParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: "Invalid product ID" });
+    return;
+  }
+
+  const result = await db.transaction(async (tx) => {
+    const [product] = await tx
+      .select()
+      .from(products)
+      .where(eq(products.id, params.data.productId))
+      .for("update")
+      .limit(1);
+
+    if (!product) return { status: "missing" } as const;
+
+    const references = await Promise.all([
+      tx.select({ id: inventoryItems.id }).from(inventoryItems)
+        .where(eq(inventoryItems.productId, product.id)).limit(1),
+      tx.select({ id: checkoutSessions.id }).from(checkoutSessions)
+        .where(eq(checkoutSessions.productId, product.id)).limit(1),
+      tx.select({ id: orders.id }).from(orders)
+        .where(eq(orders.productId, product.id)).limit(1),
+      tx.select({ id: flashSales.id }).from(flashSales)
+        .where(eq(flashSales.productId, product.id)).limit(1),
+      tx.select({ id: promoCodes.id }).from(promoCodes)
+        .where(eq(promoCodes.productId, product.id)).limit(1),
+    ]);
+
+    if (references.some((rows) => rows.length > 0)) {
+      return { status: "referenced" } as const;
+    }
+
+    await tx.insert(auditLogs).values({
+      adminId: admin.id,
+      action: "product_deleted",
+      entityType: "product",
+      entityId: product.id,
+      beforeValues: product,
+      afterValues: { deleted: true },
+    });
+    await tx.delete(products).where(eq(products.id, product.id));
+    return { status: "deleted" } as const;
+  });
+
+  if (result.status === "missing") {
+    res.status(404).json({ error: "Product not found" });
+    return;
+  }
+  if (result.status === "referenced") {
+    res.status(409).json({
+      error: "Products linked to inventory, checkouts, orders, flash sales, or promo codes cannot be deleted. Pause the product to keep its history.",
+    });
+    return;
+  }
+  res.sendStatus(204);
 });
 
 router.get("/inventory/summary", async (req, res) => {
