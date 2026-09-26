@@ -41,6 +41,7 @@ import { createChannelBuyNowKeyboard } from "./channel-buy-keyboard";
 import { createProductShopButton, isValidTelegramCustomEmojiId } from "./shop-product-button";
 import { createProductDetailsMessage } from "./product-details-message";
 import { createProductPriceChangeMessage } from "./product-price-change-message";
+import { createProductPurchaseBroadcastMessage } from "./product-purchase-broadcast-message";
 import {
   createTelegramReferralLink,
   parseTelegramStartPayload,
@@ -446,9 +447,37 @@ export async function notifyOrderDelivered(orderId: string) {
   }
 }
 
+async function queueProductPurchaseBroadcast(order: typeof orders.$inferSelect) {
+  if (!telegramBot) return;
+  const channel = await channelConfigured();
+  try {
+    await db
+      .insert(telegramPaymentNotifications)
+      .values({
+        eventKey: `product-purchase:${order.id}:channel`,
+        telegramUserId: channel,
+        language: "en",
+        eventType: "product_purchase_broadcast",
+        payload: {
+          productId: order.productId,
+          productName: order.productNameSnapshot,
+          quantity: order.quantity,
+        },
+      })
+      .onConflictDoNothing({ target: telegramPaymentNotifications.eventKey });
+    await processTelegramPaymentNotifications();
+  } catch (error) {
+    logger.warn(
+      { err: error, orderId: order.id, channel },
+      "Unable to queue product purchase channel broadcast",
+    );
+  }
+}
+
 export async function notifyOrderConfirmed(orderId: string) {
   const fulfillment = await fulfillAutomaticOrder(orderId);
   if (!fulfillment) return false;
+  await queueProductPurchaseBroadcast(fulfillment.order);
   await notifyAdminProductSold(fulfillment.order.id);
   if (fulfillment.status === "delivered") {
     await issueReferralRewardForOrder(fulfillment.order);
@@ -856,37 +885,63 @@ export function processTelegramPaymentNotifications() {
           transactionId?: string;
           reason?: string;
           verificationMessageId?: number;
+          productId?: string;
+          productName?: string;
+          quantity?: number;
         };
-        let message: string;
-        if (event.eventType === "wallet_top_up_confirmed") {
-          message = t(event.language, "topUpConfirmed").replace(
-            "{amount}",
-            Number(payload.amountUsd ?? 0).toFixed(2),
+        if (event.eventType === "product_purchase_broadcast") {
+          const productId = payload.productId?.trim();
+          const productName = payload.productName;
+          const quantity = payload.quantity;
+          if (
+            !productId ||
+            !productName ||
+            typeof quantity !== "number" ||
+            !Number.isSafeInteger(quantity) ||
+            quantity < 1
+          ) {
+            throw new Error("Invalid product purchase broadcast payload");
+          }
+          await telegramBot!.api.sendMessage(
+            event.telegramUserId,
+            createProductPurchaseBroadcastMessage({ productName, quantity }),
+            {
+              parse_mode: "HTML",
+              reply_markup: createChannelBuyNowKeyboard(productId),
+            },
           );
-        } else if (event.eventType === "payment_declined") {
-          message = t(event.language, "paymentDeclinedByAdmin")
-            .replace("{kind}", escapeHtml(payload.paymentKind ?? "payment"))
-            .replace("{amount}", Number(payload.amountUsd ?? 0).toFixed(2))
-            .replace("{transaction}", escapeHtml(payload.transactionId ?? "Not provided"))
-            .replace("{reason}", escapeHtml(payload.reason ?? "Declined by admin"));
         } else {
-          const key =
-            payload.paymentKind === "wallet"
-              ? "topUpVerificationFailed"
-              : "paymentVerificationFailed";
-          message = t(event.language, key)
-            .replace("{amount}", Number(payload.amountUsd ?? 0).toFixed(2))
-            .replace("{transaction}", escapeHtml(payload.transactionId ?? "Not provided"))
-            .replace("{reason}", escapeHtml(payload.reason ?? "Automatic verification failed"));
+          let message: string;
+          if (event.eventType === "wallet_top_up_confirmed") {
+            message = t(event.language, "topUpConfirmed").replace(
+              "{amount}",
+              Number(payload.amountUsd ?? 0).toFixed(2),
+            );
+          } else if (event.eventType === "payment_declined") {
+            message = t(event.language, "paymentDeclinedByAdmin")
+              .replace("{kind}", escapeHtml(payload.paymentKind ?? "payment"))
+              .replace("{amount}", Number(payload.amountUsd ?? 0).toFixed(2))
+              .replace("{transaction}", escapeHtml(payload.transactionId ?? "Not provided"))
+              .replace("{reason}", escapeHtml(payload.reason ?? "Declined by admin"));
+          } else {
+            const key =
+              payload.paymentKind === "wallet"
+                ? "topUpVerificationFailed"
+                : "paymentVerificationFailed";
+            message = t(event.language, key)
+              .replace("{amount}", Number(payload.amountUsd ?? 0).toFixed(2))
+              .replace("{transaction}", escapeHtml(payload.transactionId ?? "Not provided"))
+              .replace("{reason}", escapeHtml(payload.reason ?? "Automatic verification failed"));
+          }
+          await dismissVerificationMessage(
+            event.telegramUserId,
+            Number(payload.verificationMessageId),
+          );
+          await telegramBot!.api.sendMessage(event.telegramUserId, message, {
+            parse_mode: "HTML",
+            reply_markup: customerKeyboard(event.language),
+          });
         }
-        await dismissVerificationMessage(
-          event.telegramUserId,
-          Number(payload.verificationMessageId),
-        );
-        await telegramBot!.api.sendMessage(event.telegramUserId, message, {
-          parse_mode: "HTML",
-          reply_markup: customerKeyboard(event.language),
-        });
         await db
           .update(telegramPaymentNotifications)
           .set({ sentAt: new Date(), lastError: null, updatedAt: new Date() })
@@ -905,7 +960,7 @@ export function processTelegramPaymentNotifications() {
             updatedAt: new Date(),
           })
           .where(eq(telegramPaymentNotifications.id, event.id));
-        logger.warn({ err: error, notificationId: event.id }, "Unable to send payment notification");
+        logger.warn({ err: error, notificationId: event.id }, "Unable to send Telegram notification");
       }
     }
   })();
