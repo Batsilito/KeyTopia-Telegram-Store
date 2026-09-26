@@ -46,6 +46,7 @@ import {
   parseTelegramStartPayload,
 } from "./telegram-links";
 import { createOrderDeliveryMessage } from "./order-delivery-message";
+import { createOrderPaymentConfirmationMessage } from "./order-payment-confirmation-message";
 import { createWelcomeMessage } from "./welcome-message";
 
 export const telegramBotToken = process.env.TELEGRAM_BOT_TOKEN;
@@ -473,10 +474,11 @@ export async function notifyOrderConfirmed(orderId: string) {
   try {
     await telegramBot.api.sendMessage(
       customer[0].telegramUserId,
-      t(customer[0].language, "orderPaymentConfirmed").replace(
-        "{order}",
-        escapeHtml(fulfillment.order.orderNumber),
-      ),
+      createOrderPaymentConfirmationMessage({
+        language: customer[0].language,
+        deliveryType: fulfillment.order.deliveryType,
+        orderNumber: fulfillment.order.orderNumber,
+      }),
       {
         parse_mode: "HTML",
         reply_markup: customerKeyboard(customer[0].language),

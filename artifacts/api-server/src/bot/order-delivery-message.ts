@@ -23,19 +23,17 @@ export function createOrderDeliveryMessage({
   orderNumber,
   deliveryInfo,
 }: OrderDeliveryMessageInput) {
-  const lines = [
-    `<b>${t(language, "orderDelivered")}</b>`,
+  const statusMessage =
+    deliveryType === "manual"
+      ? t(language, "orderCompleted")
+      : t(language, "orderDelivered");
+  return [
+    `<b>${statusMessage}</b>`,
     "",
     `📦 <b>${t(language, "product")}:</b> ${escapeHtml(productName)}`,
     `🧾 <b>${t(language, "shopOrder")}:</b> <code>${escapeHtml(orderNumber)}</code>`,
     "",
     `<b>${t(language, "deliveryDetails")}:</b>`,
     `<pre>${escapeHtml(deliveryInfo)}</pre>`,
-  ];
-
-  if (deliveryType === "manual") {
-    lines.push("", t(language, "manualDeliveryContact"));
-  }
-
-  return lines.join("\n");
+  ].join("\n");
 }
