@@ -211,6 +211,8 @@ export interface InventoryItem {
   productId: string;
   productName: string;
   maskedValue: string;
+  /** @nullable */
+  unitCostUsd: number | null;
   status: InventoryItemStatus;
   /** @nullable */
   orderNumber: string | null;
@@ -226,6 +228,11 @@ export interface InventoryPage {
 
 export interface InventoryImportInput {
   productId: string;
+  /**
+     * @minimum 0
+     * @maximum 9999999999.99
+     */
+  unitCostUsd?: number;
   /**
      * @minItems 1
      * @items.minLength 1
@@ -317,6 +324,10 @@ export interface Order {
   customerName: string;
   productName: string;
   priceUsd: number;
+  /** @nullable */
+  acquisitionCostUsd: number | null;
+  /** @nullable */
+  realizedProfitUsd: number | null;
   paymentMethod: OrderPaymentMethod;
   status: OrderStatus;
   deliveryType: OrderDeliveryType;
@@ -351,6 +362,11 @@ export interface OrderStatusInput {
 export interface DeliveryInput {
   /** @minLength 1 */
   deliveryInfo: string;
+  /**
+     * @minimum 0
+     * @maximum 9999999999.99
+     */
+  acquisitionCostUsd: number;
 }
 
 export type PaymentPaymentMethod = typeof PaymentPaymentMethod[keyof typeof PaymentPaymentMethod];
@@ -659,6 +675,9 @@ export interface MetricPoint {
 
 export interface AnalyticsSummary {
   revenueUsd: number;
+  acquisitionCostUsd: number;
+  realizedProfitUsd: number;
+  costedOrderCount: number;
   orderCount: number;
   averageOrderValueUsd: number;
   newCustomers: number;

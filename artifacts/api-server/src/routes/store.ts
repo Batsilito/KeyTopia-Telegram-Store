@@ -27,6 +27,7 @@ import {
   eq,
   ilike,
   inArray,
+  isNotNull,
   isNull,
   lt,
   sql,
@@ -79,6 +80,7 @@ import {
   createManualStockUnitValue,
   isManualStockUnitValue,
 } from "../lib/manual-stock-units";
+import { getRealizedProfitUsd } from "../lib/profit-accounting";
 import {
   manuallyConfirmWalletTopUp,
   testBinanceApiConnectivity,
@@ -480,6 +482,9 @@ router.get("/inventory", async (req, res) => {
       maskedValue: isManualStockUnitValue(row.item.secretValue)
         ? "Manual stock unit"
         : `${row.item.secretValue.slice(0, 3)}••••${row.item.secretValue.slice(-3)}`,
+      unitCostUsd: row.item.unitCostUsd === null
+        ? null
+        : numberValue(row.item.unitCostUsd),
       status: row.item.status,
       orderNumber: row.orderNumber ?? null,
       createdAt: row.item.createdAt.toISOString(),
@@ -500,6 +505,12 @@ router.post("/inventory", async (req, res) => {
   if (!selectedProduct) return res.status(404).json({ error: "Product not found" });
 
   const isManualProduct = selectedProduct.deliveryType === "manual";
+  if (isManualProduct && parsed.data.unitCostUsd !== undefined) {
+    return res.status(400).json({ error: "Manual stock units do not accept a per-item cost" });
+  }
+  if (!isManualProduct && parsed.data.unitCostUsd === undefined) {
+    return res.status(400).json({ error: "Automatic inventory requires a per-item acquisition cost" });
+  }
   if (isManualProduct && (parsed.data.quantity === undefined || parsed.data.values !== undefined)) {
     return res.status(400).json({ error: "Manual-delivery products require a stock quantity" });
   }
@@ -531,6 +542,7 @@ router.post("/inventory", async (req, res) => {
           productId: parsed.data.productId,
           secretValue: item.value,
           valueHash: item.hash,
+          unitCostUsd: isManualProduct ? null : parsed.data.unitCostUsd!.toFixed(2),
         })),
       ).onConflictDoNothing({ target: inventoryItems.valueHash }).returning({ id: inventoryItems.id })
       : [];
@@ -598,6 +610,13 @@ async function listOrderRows(limit = 20, params?: { page: number; pageSize: numb
     customerName: `${row.customer.firstName}${row.customer.lastName ? ` ${row.customer.lastName}` : ""}`,
     productName: row.product.nameEn,
     priceUsd: numberValue(row.order.priceUsd),
+    acquisitionCostUsd: row.order.acquisitionCostUsd === null
+      ? null
+      : numberValue(row.order.acquisitionCostUsd),
+    realizedProfitUsd: getRealizedProfitUsd(
+      row.order.priceUsd,
+      row.order.acquisitionCostUsd,
+    ),
     paymentMethod: row.order.paymentMethod,
     status: row.order.status,
     deliveryType: row.order.deliveryType,
@@ -656,11 +675,21 @@ router.post("/orders/:orderId/deliver", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return res;
   const parsed = DeliverOrderBody.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: "Delivery information is required" });
+  if (!parsed.success) return res.status(400).json({ error: "Delivery information and acquisition cost are required" });
   const rows = await db.transaction(async (tx) => {
     const delivered = await tx.update(orders)
-      .set({ deliveryInfo: parsed.data.deliveryInfo, status: "delivered", deliveredAt: new Date(), updatedAt: new Date() })
-      .where(and(eq(orders.id, req.params.orderId), inArray(orders.status, ["paid", "processing"])))
+      .set({
+        deliveryInfo: parsed.data.deliveryInfo,
+        acquisitionCostUsd: parsed.data.acquisitionCostUsd.toFixed(2),
+        status: "delivered",
+        deliveredAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(and(
+        eq(orders.id, req.params.orderId),
+        eq(orders.deliveryType, "manual"),
+        inArray(orders.status, ["paid", "processing"]),
+      ))
       .returning();
     if (!delivered[0]?.checkoutSessionId) return delivered;
     const reservations = await tx.update(inventoryReservations)
@@ -680,7 +709,7 @@ router.post("/orders/:orderId/deliver", async (req, res) => {
     }
     return delivered;
   });
-  if (!rows[0]) return res.status(404).json({ error: "Order not found" });
+  if (!rows[0]) return res.status(409).json({ error: "Order is not available for manual delivery" });
   await issueReferralRewardForOrder(rows[0]);
   await notifyOrderDelivered(rows[0].id);
   const items = await listOrderRows(1, { page: 1, pageSize: 1, search: rows[0].orderNumber });
@@ -1352,16 +1381,28 @@ router.get("/analytics/summary", async (req, res) => {
   const from = new Date(`${parsed.data.from}T00:00:00.000Z`);
   const to = new Date(`${parsed.data.to}T23:59:59.999Z`);
   const condition = and(sql`${orders.createdAt} >= ${from}`, sql`${orders.createdAt} <= ${to}`);
-  const [totals, cancelled, paymentsByMethod, topProducts] = await Promise.all([
+  const [totals, cancelled, paymentsByMethod, topProducts, costSummary] = await Promise.all([
     db.select({ revenue: sum(orders.priceUsd), count: count() }).from(orders).where(and(condition, sql`${orders.status} <> 'cancelled'`)),
     db.select({ count: count() }).from(orders).where(and(condition, eq(orders.status, "cancelled"))),
     db.select({ label: orders.paymentMethod, value: sum(orders.priceUsd) }).from(orders).where(and(condition, sql`${orders.status} <> 'cancelled'`)).groupBy(orders.paymentMethod),
     db.select({ label: orders.productNameSnapshot, value: sum(orders.priceUsd) }).from(orders).where(and(condition, sql`${orders.status} <> 'cancelled'`)).groupBy(orders.productNameSnapshot).orderBy(desc(sum(orders.priceUsd))).limit(5),
+    db.select({
+      acquisitionCostUsd: sum(orders.acquisitionCostUsd),
+      realizedProfitUsd: sql<string>`coalesce(sum(${orders.priceUsd} - ${orders.acquisitionCostUsd}), 0)`,
+      costedOrderCount: count(),
+    }).from(orders).where(and(
+      condition,
+      eq(orders.status, "delivered"),
+      isNotNull(orders.acquisitionCostUsd),
+    )),
   ]);
   const totalRevenue = numberValue(totals[0]?.revenue);
   const countValue = Number(totals[0]?.count ?? 0);
   res.json({
     revenueUsd: totalRevenue,
+    acquisitionCostUsd: numberValue(costSummary[0]?.acquisitionCostUsd),
+    realizedProfitUsd: numberValue(costSummary[0]?.realizedProfitUsd),
+    costedOrderCount: Number(costSummary[0]?.costedOrderCount ?? 0),
     orderCount: countValue,
     averageOrderValueUsd: countValue ? totalRevenue / countValue : 0,
     newCustomers: 0,

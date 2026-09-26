@@ -9,6 +9,9 @@ import type { MetricPoint } from './metricPoint';
 
 export interface AnalyticsSummary {
   revenueUsd: number;
+  acquisitionCostUsd: number;
+  realizedProfitUsd: number;
+  costedOrderCount: number;
   orderCount: number;
   averageOrderValueUsd: number;
   newCustomers: number;

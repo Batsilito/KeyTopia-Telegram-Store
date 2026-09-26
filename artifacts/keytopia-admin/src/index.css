@@ -112,3 +112,18 @@
 @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 .animate-rise { animation: rise .45s ease-out both; }
 .noise::after { content: ''; position: fixed; inset: 0; opacity: .028; pointer-events: none; z-index: 50; background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 160 160' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.38'/%3E%3C/svg%3E"); }
+
+button:not(:disabled) {
+  transition-property: transform, color, background-color, border-color, box-shadow, opacity, filter;
+  transition-duration: 140ms;
+  transition-timing-function: cubic-bezier(.2, .7, .2, 1);
+}
+
+button:not(:disabled):active {
+  transform: translateY(1px) scale(.98);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button:not(:disabled) { transition-duration: 0ms; }
+  button:not(:disabled):active { transform: none; }
+}

@@ -95,6 +95,8 @@ export const GetDashboardOverviewResponse = zod.object({
   "customerName": zod.string(),
   "productName": zod.string(),
   "priceUsd": zod.number(),
+  "acquisitionCostUsd": zod.number().nullable(),
+  "realizedProfitUsd": zod.number().nullable(),
   "paymentMethod": zod.enum(['wallet', 'binance', 'bybit', 'vodafone_cash', 'instapay']),
   "status": zod.enum(['paid', 'processing', 'delivered', 'cancelled']),
   "deliveryType": zod.enum(['automatic', 'manual']),
@@ -361,6 +363,7 @@ export const ListInventoryResponse = zod.object({
   "productId": zod.string().uuid(),
   "productName": zod.string(),
   "maskedValue": zod.string(),
+  "unitCostUsd": zod.number().nullable(),
   "status": zod.enum(['available', 'reserved', 'delivered', 'disabled']),
   "orderNumber": zod.string().nullable(),
   "createdAt": zod.coerce.date()
@@ -374,6 +377,10 @@ export const ListInventoryResponse = zod.object({
 /**
  * @summary Add stock values for automatic products or a quantity for manual products
  */
+export const importInventoryBodyUnitCostUsdMin = 0;
+export const importInventoryBodyUnitCostUsdMax = 9999999999.99;
+export const importInventoryBodyUnitCostUsdMultipleOf = 0.01;
+
 
 
 export const importInventoryBodyQuantityMax = 1000;
@@ -382,6 +389,7 @@ export const importInventoryBodyQuantityMax = 1000;
 
 export const ImportInventoryBody = zod.object({
   "productId": zod.string().uuid(),
+  "unitCostUsd": zod.number().min(importInventoryBodyUnitCostUsdMin).max(importInventoryBodyUnitCostUsdMax).multipleOf(importInventoryBodyUnitCostUsdMultipleOf).optional(),
   "values": zod.array(zod.string().min(1)).min(1).optional(),
   "quantity": zod.number().int().min(1).max(importInventoryBodyQuantityMax).optional()
 })
@@ -418,6 +426,7 @@ export const DisableInventoryResponse = zod.object({
   "productId": zod.string().uuid(),
   "productName": zod.string(),
   "maskedValue": zod.string(),
+  "unitCostUsd": zod.number().nullable(),
   "status": zod.enum(['available', 'reserved', 'delivered', 'disabled']),
   "orderNumber": zod.string().nullable(),
   "createdAt": zod.coerce.date()
@@ -448,6 +457,8 @@ export const ListOrdersResponse = zod.object({
   "customerName": zod.string(),
   "productName": zod.string(),
   "priceUsd": zod.number(),
+  "acquisitionCostUsd": zod.number().nullable(),
+  "realizedProfitUsd": zod.number().nullable(),
   "paymentMethod": zod.enum(['wallet', 'binance', 'bybit', 'vodafone_cash', 'instapay']),
   "status": zod.enum(['paid', 'processing', 'delivered', 'cancelled']),
   "deliveryType": zod.enum(['automatic', 'manual']),
@@ -474,6 +485,8 @@ export const GetOrderResponse = zod.object({
   "customerName": zod.string(),
   "productName": zod.string(),
   "priceUsd": zod.number(),
+  "acquisitionCostUsd": zod.number().nullable(),
+  "realizedProfitUsd": zod.number().nullable(),
   "paymentMethod": zod.enum(['wallet', 'binance', 'bybit', 'vodafone_cash', 'instapay']),
   "status": zod.enum(['paid', 'processing', 'delivered', 'cancelled']),
   "deliveryType": zod.enum(['automatic', 'manual']),
@@ -500,6 +513,8 @@ export const UpdateOrderStatusResponse = zod.object({
   "customerName": zod.string(),
   "productName": zod.string(),
   "priceUsd": zod.number(),
+  "acquisitionCostUsd": zod.number().nullable(),
+  "realizedProfitUsd": zod.number().nullable(),
   "paymentMethod": zod.enum(['wallet', 'binance', 'bybit', 'vodafone_cash', 'instapay']),
   "status": zod.enum(['paid', 'processing', 'delivered', 'cancelled']),
   "deliveryType": zod.enum(['automatic', 'manual']),
@@ -517,10 +532,15 @@ export const DeliverOrderParams = zod.object({
 })
 
 
+export const deliverOrderBodyAcquisitionCostUsdMin = 0;
+export const deliverOrderBodyAcquisitionCostUsdMax = 9999999999.99;
+export const deliverOrderBodyAcquisitionCostUsdMultipleOf = 0.01;
+
 
 
 export const DeliverOrderBody = zod.object({
-  "deliveryInfo": zod.string().min(1)
+  "deliveryInfo": zod.string().min(1),
+  "acquisitionCostUsd": zod.number().min(deliverOrderBodyAcquisitionCostUsdMin).max(deliverOrderBodyAcquisitionCostUsdMax).multipleOf(deliverOrderBodyAcquisitionCostUsdMultipleOf)
 })
 
 export const DeliverOrderResponse = zod.object({
@@ -529,6 +549,8 @@ export const DeliverOrderResponse = zod.object({
   "customerName": zod.string(),
   "productName": zod.string(),
   "priceUsd": zod.number(),
+  "acquisitionCostUsd": zod.number().nullable(),
+  "realizedProfitUsd": zod.number().nullable(),
   "paymentMethod": zod.enum(['wallet', 'binance', 'bybit', 'vodafone_cash', 'instapay']),
   "status": zod.enum(['paid', 'processing', 'delivered', 'cancelled']),
   "deliveryType": zod.enum(['automatic', 'manual']),
@@ -955,6 +977,9 @@ export const GetAnalyticsSummaryQueryParams = zod.object({
 
 export const GetAnalyticsSummaryResponse = zod.object({
   "revenueUsd": zod.number(),
+  "acquisitionCostUsd": zod.number(),
+  "realizedProfitUsd": zod.number(),
+  "costedOrderCount": zod.number().int(),
   "orderCount": zod.number().int(),
   "averageOrderValueUsd": zod.number(),
   "newCustomers": zod.number().int(),

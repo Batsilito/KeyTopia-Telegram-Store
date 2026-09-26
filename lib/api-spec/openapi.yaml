@@ -775,12 +775,13 @@ components:
         productId: { type: string, format: uuid }
         productName: { type: string }
         maskedValue: { type: string }
+        unitCostUsd: { type: ["number", "null"] }
         status:
           type: string
           enum: [available, reserved, delivered, disabled]
         orderNumber: { type: ["string", "null"] }
         createdAt: { type: string, format: date-time }
-      required: [id, productId, productName, maskedValue, status, orderNumber, createdAt]
+      required: [id, productId, productName, maskedValue, unitCostUsd, status, orderNumber, createdAt]
     InventoryPage:
       type: object
       properties:
@@ -795,6 +796,11 @@ components:
       type: object
       properties:
         productId: { type: string, format: uuid }
+        unitCostUsd:
+          type: number
+          minimum: 0
+          maximum: 9999999999.99
+          multipleOf: 0.01
         values:
           type: array
           minItems: 1
@@ -852,6 +858,8 @@ components:
         customerName: { type: string }
         productName: { type: string }
         priceUsd: { type: number }
+        acquisitionCostUsd: { type: ["number", "null"] }
+        realizedProfitUsd: { type: ["number", "null"] }
         paymentMethod:
           type: string
           enum: [wallet, binance, bybit, vodafone_cash, instapay]
@@ -864,7 +872,7 @@ components:
         createdAt: { type: string, format: date-time }
         deliveredAt: { type: ["string", "null"], format: date-time }
         deliveryInfo: { type: ["string", "null"] }
-      required: [id, orderNumber, customerName, productName, priceUsd, paymentMethod, status, deliveryType, createdAt, deliveredAt, deliveryInfo]
+      required: [id, orderNumber, customerName, productName, priceUsd, acquisitionCostUsd, realizedProfitUsd, paymentMethod, status, deliveryType, createdAt, deliveredAt, deliveryInfo]
     OrderPage:
       type: object
       properties:
@@ -884,7 +892,12 @@ components:
       type: object
       properties:
         deliveryInfo: { type: string, minLength: 1 }
-      required: [deliveryInfo]
+        acquisitionCostUsd:
+          type: number
+          minimum: 0
+          maximum: 9999999999.99
+          multipleOf: 0.01
+      required: [deliveryInfo, acquisitionCostUsd]
     Payment:
       type: object
       properties:
@@ -1073,6 +1086,9 @@ components:
       type: object
       properties:
         revenueUsd: { type: number }
+        acquisitionCostUsd: { type: number }
+        realizedProfitUsd: { type: number }
+        costedOrderCount: { type: integer }
         orderCount: { type: integer }
         averageOrderValueUsd: { type: number }
         newCustomers: { type: integer }
@@ -1089,7 +1105,7 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/MetricPoint"
-      required: [revenueUsd, orderCount, averageOrderValueUsd, newCustomers, returningCustomers, cashbackIssuedUsd, referralRewardsIssuedUsd, cancelledOrders, paymentConfirmationMinutes, revenueByPaymentMethod, topProducts]
+      required: [revenueUsd, acquisitionCostUsd, realizedProfitUsd, costedOrderCount, orderCount, averageOrderValueUsd, newCustomers, returningCustomers, cashbackIssuedUsd, referralRewardsIssuedUsd, cancelledOrders, paymentConfirmationMinutes, revenueByPaymentMethod, topProducts]
     MetricPoint:
       type: object
       properties:

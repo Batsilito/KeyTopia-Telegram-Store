@@ -12,6 +12,8 @@ export interface InventoryItem {
   productId: string;
   productName: string;
   maskedValue: string;
+  /** @nullable */
+  unitCostUsd: number | null;
   status: InventoryItemStatus;
   /** @nullable */
   orderNumber: string | null;

@@ -9,6 +9,11 @@
 export interface InventoryImportInput {
   productId: string;
   /**
+     * @minimum 0
+     * @maximum 9999999999.99
+     */
+  unitCostUsd?: number;
+  /**
      * @minItems 1
      * @items.minLength 1
      */

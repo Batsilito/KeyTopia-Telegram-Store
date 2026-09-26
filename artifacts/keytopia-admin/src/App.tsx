@@ -30,6 +30,19 @@ import { ErrorBoundary } from '@/components/error-boundary';
 
 const queryClient = new QueryClient();
 
+type AdminSessionCacheData = {
+  authenticated: boolean;
+  admin: { id: string; email: string; name: string; role: string } | null;
+};
+
+function updateAdminSessionCache(session: AdminSessionCacheData) {
+  const sessionKey = getGetAdminSessionQueryKey();
+  queryClient.removeQueries({
+    predicate: (query) => query.queryKey[0] !== sessionKey[0],
+  });
+  queryClient.setQueryData(sessionKey, session);
+}
+
 const navGroups: { label: string; items: { href: string; label: string; icon: LucideIcon; count?: string }[] }[] = [
   { label: 'Command', items: [{ href: '/', label: 'Overview', icon: LayoutDashboard }, { href: '/orders', label: 'Orders', icon: ShoppingBag }, { href: '/payments', label: 'Payment review', icon: CreditCard, count: 'live' }, { href: '/support', label: 'Support queue', icon: Headphones }] },
   { label: 'Merchandising', items: [{ href: '/products', label: 'Products', icon: Package }, { href: '/inventory', label: 'Inventory', icon: Boxes }, { href: '/flash-sales', label: 'Flash sales', icon: Tag }, { href: '/promo-codes', label: 'Promo codes', icon: Percent }] },
@@ -107,7 +120,12 @@ function Shell({ children }: { children: ReactNode }) {
   const current = navGroups.flatMap((group) => group.items).find((item) => item.href === location);
   if (session.isLoading) return <div className="min-h-[100dvh] bg-background p-5"><div className="mx-auto max-w-7xl"><Skeleton className="h-16" /><div className="mt-8"><LoadingBlock /></div></div></div>;
   if (!session.data?.authenticated) return <Login />;
-  const logoutNow = () => logout.mutate(undefined, { onSuccess: () => setLocation('/login') });
+  const logoutNow = () => logout.mutate(undefined, {
+    onSuccess: () => {
+      updateAdminSessionCache({ authenticated: false, admin: null });
+      setLocation('/login');
+    },
+  });
   return <div className="noise min-h-[100dvh] bg-background text-foreground">
     <aside className={`fixed inset-y-0 left-0 z-30 flex w-[270px] flex-col bg-sidebar px-4 py-5 text-sidebar-foreground transition-transform md:translate-x-0 ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}>
       <div className="flex items-center justify-between px-3"><Link href="/" className="flex items-center gap-3" onClick={() => setMobileOpen(false)} data-testid="link-brand"><span className="grid h-9 w-9 place-items-center rounded-xl bg-sidebar-primary text-sidebar-primary-foreground"><KeyRound size={18} strokeWidth={2.5} /></span><span><strong className="block text-[15px] tracking-tight">KeyTopia</strong><span className="font-mono text-[9px] uppercase tracking-[.18em] text-sidebar-foreground/55">control room</span></span></Link><button className="rounded-md p-1 text-sidebar-foreground/60 md:hidden" onClick={() => setMobileOpen(false)} aria-label="Close navigation"><X size={18} /></button></div>
@@ -137,12 +155,67 @@ function OrderRow({ order }: { order: any }) { return <div className="flex items
 function PaymentRow({ payment, compact = false }: { payment: any; compact?: boolean }) { return <div className="flex items-center justify-between gap-3 px-5 py-4"><div className="min-w-0"><p className="truncate text-sm font-extrabold">{payment.customerName}</p><p className="mt-1 truncate font-mono text-[10px] text-muted-foreground">{payment.orderNumber || 'Unlinked'} · {titleCase(payment.paymentMethod)}</p></div><div className="text-right"><p className="font-mono text-sm font-bold">{money(payment.usdAmount)}</p>{!compact && <p className="mt-1 text-xs text-muted-foreground">{date(payment.submittedAt)}</p>}<Badge tone={payment.status === 'confirmed' ? 'green' : payment.status === 'rejected' ? 'red' : 'orange'}>{payment.status}</Badge></div></div>; }
 
 function Orders() {
-  const [search, setSearch] = useState(''); const [status, setStatus] = useState<any>('all'); const [page, setPage] = useState(1); const [deliverId, setDeliverId] = useState<string | null>(null); const [deliveryInfo, setDeliveryInfo] = useState('');
+  const [search, setSearch] = useState(''); const [status, setStatus] = useState<any>('all'); const [page, setPage] = useState(1); const [deliverId, setDeliverId] = useState<string | null>(null); const [deliveryInfo, setDeliveryInfo] = useState(''); const [acquisitionCostText, setAcquisitionCostText] = useState('');
   const params = useMemo(() => ({ page, pageSize: 20, search: search || undefined, status }), [page, search, status]);
   const query = useListOrders(params); const update = useUpdateOrderStatus(); const deliver = useDeliverOrder(); const qc = useQueryClient();
   const refresh = () => { query.refetch(); qc.invalidateQueries({ queryKey: getGetDashboardOverviewQueryKey() }); };
   const statusNow = (id: string, next: any) => update.mutate({ orderId: id, data: { status: next } }, { onSuccess: refresh });
-  return <div className="animate-rise"><PageIntro eyebrow="Fulfillment desk" title="Orders" description="Find an order, move it through fulfillment, and keep the storefront promise intact." action={<Button variant="secondary" onClick={refresh} data-testid="button-refresh-orders"><RefreshCw size={15} /> Refresh</Button>} /><Card><div className="flex flex-col gap-3 border-b border-border p-4 md:flex-row"><div className="relative flex-1"><Search className="absolute left-3 top-2.5 text-muted-foreground" size={16} /><Input className="pl-9" placeholder="Search order number or customer" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} data-testid="input-search-orders" /></div><Select className="md:w-44" value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }} data-testid="select-order-status"><option value="all">All statuses</option><option value="paid">Paid</option><option value="processing">Processing</option><option value="delivered">Delivered</option><option value="cancelled">Cancelled</option></Select><Button variant="quiet"><Filter size={15} /> Filters</Button></div>{query.isLoading ? <LoadingBlock /> : query.isError ? <ErrorState retry={() => query.refetch()} /> : query.data?.items.length ? <div className="overflow-x-auto"><table className="w-full min-w-[820px] text-left text-sm"><thead className="bg-muted/55 text-[10px] uppercase tracking-[.12em] text-muted-foreground"><tr><th className="px-5 py-3">Order</th><th className="px-4 py-3">Customer</th><th className="px-4 py-3">Payment</th><th className="px-4 py-3">Value</th><th className="px-4 py-3">Status</th><th className="px-5 py-3 text-right">Action</th></tr></thead><tbody className="divide-y divide-border">{query.data.items.map((order: any) => <tr key={order.id} className="transition hover:bg-muted/30" data-testid={`row-order-${order.id}`}><td className="px-5 py-4"><p className="font-mono text-xs font-bold">{order.orderNumber}</p><p className="mt-1 text-xs text-muted-foreground">{date(order.createdAt)}</p></td><td className="px-4 py-4"><p className="font-bold">{order.customerName}</p><p className="mt-1 text-xs text-muted-foreground">{order.productName}</p></td><td className="px-4 py-4 text-xs font-semibold">{titleCase(order.paymentMethod)}</td><td className="px-4 py-4 font-mono font-bold">{money(order.priceUsd)}</td><td className="px-4 py-4"><Badge tone={order.status === 'delivered' ? 'green' : order.status === 'cancelled' ? 'red' : order.status === 'processing' ? 'blue' : 'orange'}>{order.status}</Badge></td><td className="px-5 py-4 text-right">{order.status === 'paid' && <Button variant="secondary" className="px-2.5 py-1.5 text-xs" onClick={() => statusNow(order.id, 'processing')} disabled={update.isPending} data-testid={`button-process-order-${order.id}`}>Start processing</Button>}{order.status === 'processing' && <Button className="px-2.5 py-1.5 text-xs" onClick={() => { setDeliverId(order.id); setDeliveryInfo(order.deliveryInfo || ''); }} data-testid={`button-deliver-order-${order.id}`}><Truck size={13} /> Deliver</Button>}{order.status === 'delivered' && <span className="text-xs font-bold text-primary">Fulfilled</span>}{order.status === 'cancelled' && <span className="text-xs font-bold text-muted-foreground">Closed</span>}</td></tr>)}</tbody></table></div> : <EmptyState icon={ShoppingBag} title="No orders match" body="Try a different search or widen the status filter." />}{query.data && <Pager page={query.data.page} total={query.data.total} pageSize={query.data.pageSize} onPage={setPage} />}</Card>{deliverId && <Modal title="Complete delivery" onClose={() => setDeliverId(null)}><p className="mb-4 text-sm text-muted-foreground">Add the delivery reference or fulfillment note. This will be visible on the order record.</p><Field label="Delivery information"><Textarea value={deliveryInfo} onChange={(e) => setDeliveryInfo(e.target.value)} placeholder="e.g. Subscription activated · reference 8K2..." data-testid="textarea-delivery-info" /></Field><div className="mt-5 flex justify-end gap-2"><Button variant="secondary" onClick={() => setDeliverId(null)}>Cancel</Button><Button disabled={!deliveryInfo.trim() || deliver.isPending} onClick={() => deliver.mutate({ orderId: deliverId, data: { deliveryInfo } }, { onSuccess: () => { setDeliverId(null); refresh(); } })} data-testid="button-confirm-delivery"><Check size={15} /> Mark delivered</Button></div></Modal>}</div>;
+  const acquisitionCostUsd = Number(acquisitionCostText);
+  const validAcquisitionCost = /^\d{1,10}(?:\.\d{1,2})?$/.test(acquisitionCostText.trim()) &&
+    Number.isFinite(acquisitionCostUsd) &&
+    acquisitionCostUsd >= 0 &&
+    acquisitionCostUsd <= 9999999999.99;
+  return <div className="animate-rise">
+    <PageIntro eyebrow="Fulfillment desk" title="Orders" description="Find an order, move it through fulfillment, and keep the storefront promise intact." action={<Button variant="secondary" onClick={refresh} data-testid="button-refresh-orders"><RefreshCw size={15} /> Refresh</Button>} />
+    <Card>
+      <div className="flex flex-col gap-3 border-b border-border p-4 md:flex-row">
+        <div className="relative flex-1"><Search className="absolute left-3 top-2.5 text-muted-foreground" size={16} /><Input className="pl-9" placeholder="Search order number or customer" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} data-testid="input-search-orders" /></div>
+        <Select className="md:w-44" value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }} data-testid="select-order-status">
+          <option value="all">All statuses</option><option value="paid">Paid</option><option value="processing">Processing</option><option value="delivered">Delivered</option><option value="cancelled">Cancelled</option>
+        </Select>
+        <Button variant="quiet"><Filter size={15} /> Filters</Button>
+      </div>
+      {query.isLoading ? <LoadingBlock /> : query.isError ? <ErrorState retry={() => query.refetch()} /> : query.data?.items.length ? <div className="overflow-x-auto">
+        <table className="w-full min-w-[1040px] text-left text-sm">
+          <thead className="bg-muted/55 text-[10px] uppercase tracking-[.12em] text-muted-foreground">
+            <tr><th className="px-5 py-3">Order</th><th className="px-4 py-3">Customer</th><th className="px-4 py-3">Payment</th><th className="px-4 py-3">Value</th><th className="px-4 py-3">Acquisition cost</th><th className="px-4 py-3">Profit</th><th className="px-4 py-3">Status</th><th className="px-5 py-3 text-right">Action</th></tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {query.data.items.map((order: any) => <tr key={order.id} className="transition hover:bg-muted/30" data-testid={`row-order-${order.id}`}>
+              <td className="px-5 py-4"><p className="font-mono text-xs font-bold">{order.orderNumber}</p><p className="mt-1 text-xs text-muted-foreground">{date(order.createdAt)}</p></td>
+              <td className="px-4 py-4"><p className="font-bold">{order.customerName}</p><p className="mt-1 text-xs text-muted-foreground">{order.productName}</p></td>
+              <td className="px-4 py-4 text-xs font-semibold">{titleCase(order.paymentMethod)}</td>
+              <td className="px-4 py-4 font-mono font-bold">{money(order.priceUsd)}</td>
+              <td className="px-4 py-4 font-mono text-xs">{order.acquisitionCostUsd == null ? '—' : money(order.acquisitionCostUsd)}</td>
+              <td className={`px-4 py-4 font-mono text-xs font-bold ${order.realizedProfitUsd < 0 ? 'text-destructive' : 'text-primary'}`}>{order.realizedProfitUsd == null ? '—' : money(order.realizedProfitUsd)}</td>
+              <td className="px-4 py-4"><Badge tone={order.status === 'delivered' ? 'green' : order.status === 'cancelled' ? 'red' : order.status === 'processing' ? 'blue' : 'orange'}>{order.status}</Badge></td>
+              <td className="px-5 py-4 text-right">
+                {order.status === 'paid' && <Button variant="secondary" className="px-2.5 py-1.5 text-xs" onClick={() => statusNow(order.id, 'processing')} disabled={update.isPending} data-testid={`button-process-order-${order.id}`}>Start processing</Button>}
+                {order.status === 'processing' && order.deliveryType === 'manual' && <Button className="px-2.5 py-1.5 text-xs" onClick={() => { setDeliverId(order.id); setDeliveryInfo(order.deliveryInfo || ''); setAcquisitionCostText(''); }} data-testid={`button-deliver-order-${order.id}`}><Truck size={13} /> Deliver</Button>}
+                {order.status === 'processing' && order.deliveryType === 'automatic' && <span className="text-xs font-semibold text-muted-foreground">Auto fulfillment</span>}
+                {order.status === 'delivered' && <span className="text-xs font-bold text-primary">Fulfilled</span>}
+                {order.status === 'cancelled' && <span className="text-xs font-bold text-muted-foreground">Closed</span>}
+              </td>
+            </tr>)}
+          </tbody>
+        </table>
+      </div> : <EmptyState icon={ShoppingBag} title="No orders match" body="Try a different search or widen the status filter." />}
+      {query.data && <Pager page={query.data.page} total={query.data.total} pageSize={query.data.pageSize} onPage={setPage} />}
+    </Card>
+    {deliverId && <Modal title="Complete delivery" onClose={() => setDeliverId(null)}>
+      <p className="mb-4 text-sm text-muted-foreground">Record what the customer received and what it cost to fulfill this order.</p>
+      <div className="grid gap-4">
+        <Field label="Delivery information"><Textarea value={deliveryInfo} onChange={(e) => setDeliveryInfo(e.target.value)} placeholder="e.g. Subscription activated · reference 8K2..." data-testid="textarea-delivery-info" /></Field>
+        <Field label="Total acquisition cost (USD)" hint="Enter the amount paid for the stock used to fulfill the whole order. Use 0 if there was no stock cost.">
+          <Input type="number" min="0" max="9999999999.99" step="0.01" value={acquisitionCostText} onChange={(e) => setAcquisitionCostText(e.target.value)} placeholder="e.g. 4.50" data-testid="input-order-acquisition-cost" />
+        </Field>
+      </div>
+      <div className="mt-5 flex justify-end gap-2">
+        <Button variant="secondary" onClick={() => setDeliverId(null)}>Cancel</Button>
+        <Button disabled={!deliveryInfo.trim() || !validAcquisitionCost || deliver.isPending} onClick={() => deliver.mutate({ orderId: deliverId, data: { deliveryInfo, acquisitionCostUsd } }, { onSuccess: () => { setDeliverId(null); setAcquisitionCostText(''); refresh(); } })} data-testid="button-confirm-delivery"><Check size={15} /> Mark delivered</Button>
+      </div>
+    </Modal>}
+  </div>;
 }
 
 function Pager({ page, total, pageSize, onPage }: { page: number; total: number; pageSize: number; onPage: (page: number) => void }) { const pages = Math.max(1, Math.ceil(total / pageSize)); return <div className="flex items-center justify-between border-t border-border px-5 py-3 text-xs text-muted-foreground"><span>Showing {total ? ((page - 1) * pageSize) + 1 : 0}–{Math.min(page * pageSize, total)} of {total}</span><div className="flex gap-1"><Button variant="quiet" className="px-2 py-1 text-xs" disabled={page <= 1} onClick={() => onPage(page - 1)}>Previous</Button><span className="px-2 py-1 font-mono">{page} / {pages}</span><Button variant="quiet" className="px-2 py-1 text-xs" disabled={page >= pages} onClick={() => onPage(page + 1)}>Next</Button></div></div>; }
@@ -227,6 +300,7 @@ function Inventory() {
   const [productId, setProductId] = useState('');
   const [importText, setImportText] = useState('');
   const [quantityText, setQuantityText] = useState('');
+  const [unitCostText, setUnitCostText] = useState('');
   const [fileName, setFileName] = useState('');
   const [fileError, setFileError] = useState('');
   const products = useListProducts({ page: 1, pageSize: 100, status: 'active' });
@@ -246,11 +320,15 @@ function Inventory() {
   const isManualProduct = selectedProduct?.deliveryType === 'manual';
   const quantityToAdd = Number(quantityText);
   const validQuantity = quantityText !== '' && Number.isInteger(quantityToAdd) && quantityToAdd >= 1 && quantityToAdd <= 1000;
+  const unitCostUsd = Number(unitCostText);
+  const validUnitCost = /^\d{1,10}(?:\.\d{1,2})?$/.test(unitCostText.trim()) &&
+    Number.isFinite(unitCostUsd) && unitCostUsd >= 0 && unitCostUsd <= 9999999999.99;
   const changeProduct = (nextProductId: string) => {
     importMutation.reset();
     setProductId(nextProductId);
     setImportText('');
     setQuantityText('');
+    setUnitCostText('');
     setFileName('');
     setFileError('');
   };
@@ -278,9 +356,10 @@ function Inventory() {
       return;
     }
     if (importValues.length === 0) return;
+    if (!validUnitCost) return;
     importMutation.mutate(
-      { data: { productId, values: importValues } },
-      { onSuccess: () => { setImportText(''); setFileName(''); refresh(); } },
+      { data: { productId, values: importValues, unitCostUsd } },
+      { onSuccess: () => { setImportText(''); setUnitCostText(''); setFileName(''); refresh(); } },
     );
   };
   return <div className="animate-rise">
@@ -308,14 +387,17 @@ function Inventory() {
               </div>
               {fileError && <p className="mt-2 text-xs font-bold text-destructive">{fileError}</p>}
             </Field>
+            <Field label="Acquisition cost per item (USD)" hint="Enter what you paid for each stock value. Existing duplicate values keep their original cost.">
+              <Input type="number" min="0" max="9999999999.99" step="0.01" value={unitCostText} onChange={(e) => setUnitCostText(e.target.value)} placeholder="e.g. 2.50" data-testid="input-inventory-unit-cost" />
+            </Field>
           </>}
-          <Button disabled={!productId || importMutation.isPending || (isManualProduct ? !validQuantity : importValues.length === 0)} onClick={addStock} data-testid="button-import-inventory"><Plus size={15} /> {isManualProduct ? `Add ${validQuantity ? quantityToAdd : ''} pieces` : `Import ${importValues.length || ''} values`}</Button>
+          <Button disabled={!productId || importMutation.isPending || (isManualProduct ? !validQuantity : importValues.length === 0 || !validUnitCost)} onClick={addStock} data-testid="button-import-inventory"><Plus size={15} /> {isManualProduct ? `Add ${validQuantity ? quantityToAdd : ''} pieces` : `Import ${importValues.length || ''} values`}</Button>
           {importMutation.data && <div className="rounded-lg bg-primary/10 p-3 text-xs font-bold text-primary">{isManualProduct ? `Added ${importMutation.data.imported} stock units.` : `Imported ${importMutation.data.imported} values · ${importMutation.data.skippedDuplicates} duplicates skipped.`} Available stock: {importMutation.data.available}.</div>}
         </div>
       </Card>
       <Card>
         <div className="flex flex-col justify-between gap-3 border-b border-border p-5 md:flex-row md:items-center"><div><h3 className="font-extrabold">Inventory</h3><p className="mt-1 text-xs text-muted-foreground">Credential values are masked; manual stock appears as unit counts.</p></div><Select className="md:w-48" value={productId} onChange={(e) => changeProduct(e.target.value)}><option value="">All products</option>{products.data?.items.map((product: any) => <option key={product.id} value={product.id}>{product.nameEn}</option>)}</Select></div>
-        {query.isLoading ? <LoadingBlock /> : query.isError ? <ErrorState retry={() => query.refetch()} /> : query.data?.items.length ? <div className="overflow-x-auto"><table className="w-full min-w-[620px] text-left text-sm"><thead className="bg-muted/55 text-[10px] uppercase tracking-[.12em] text-muted-foreground"><tr><th className="px-5 py-3">Product</th><th className="px-4 py-3">Value / stock unit</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Order</th><th className="px-5 py-3 text-right">Action</th></tr></thead><tbody className="divide-y divide-border">{query.data.items.map((item: any) => <tr key={item.id} data-testid={`row-inventory-${item.id}`}><td className="px-5 py-4 font-bold">{item.productName}</td><td className="px-4 py-4 font-mono text-xs">{item.maskedValue}</td><td className="px-4 py-4"><Badge tone={item.status === 'available' ? 'green' : item.status === 'disabled' ? 'red' : 'neutral'}>{item.status}</Badge></td><td className="px-4 py-4 font-mono text-xs text-muted-foreground">{item.orderNumber || '—'}</td><td className="px-5 py-4 text-right">{item.status === 'available' && <Button variant="quiet" className="text-xs text-destructive" onClick={() => disable.mutate({ inventoryId: item.id }, { onSuccess: refresh })} disabled={disable.isPending} data-testid={`button-disable-inventory-${item.id}`}>Disable</Button>}</td></tr>)}</tbody></table></div> : <EmptyState icon={Boxes} title="No inventory found" body="Add stock above to populate this view." />}
+        {query.isLoading ? <LoadingBlock /> : query.isError ? <ErrorState retry={() => query.refetch()} /> : query.data?.items.length ? <div className="overflow-x-auto"><table className="w-full min-w-[700px] text-left text-sm"><thead className="bg-muted/55 text-[10px] uppercase tracking-[.12em] text-muted-foreground"><tr><th className="px-5 py-3">Product</th><th className="px-4 py-3">Value / stock unit</th><th className="px-4 py-3">Unit cost</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Order</th><th className="px-5 py-3 text-right">Action</th></tr></thead><tbody className="divide-y divide-border">{query.data.items.map((item: any) => <tr key={item.id} data-testid={`row-inventory-${item.id}`}><td className="px-5 py-4 font-bold">{item.productName}</td><td className="px-4 py-4 font-mono text-xs">{item.maskedValue}</td><td className="px-4 py-4 font-mono text-xs">{item.unitCostUsd === null ? '—' : money(item.unitCostUsd)}</td><td className="px-4 py-4"><Badge tone={item.status === 'available' ? 'green' : item.status === 'disabled' ? 'red' : 'neutral'}>{item.status}</Badge></td><td className="px-4 py-4 font-mono text-xs text-muted-foreground">{item.orderNumber || '—'}</td><td className="px-5 py-4 text-right">{item.status === 'available' && <Button variant="quiet" className="text-xs text-destructive" onClick={() => disable.mutate({ inventoryId: item.id }, { onSuccess: refresh })} disabled={disable.isPending} data-testid={`button-disable-inventory-${item.id}`}>Disable</Button>}</td></tr>)}</tbody></table></div> : <EmptyState icon={Boxes} title="No inventory found" body="Add stock above to populate this view." />}
       </Card>
     </div>
   </div>;
@@ -359,7 +441,44 @@ function SupportConversationModal({ ticketId, onClose }: { ticketId: string; onC
 
 function Support() { const [status, setStatus] = useState<any>('all'); const [conversationId, setConversationId] = useState<string | null>(null); const query = useListSupportTickets({ page: 1, pageSize: 50, status }); return <div className="animate-rise"><PageIntro eyebrow="Customer care" title="Support queue" description="Open a ticket to read the full conversation, reply to the customer, or close it." /><Card><div className="flex flex-wrap gap-2 border-b border-border p-4">{['all', 'created', 'pending', 'closed'].map((item) => <button key={item} className={`rounded-full px-3 py-1.5 text-xs font-extrabold ${status === item ? 'bg-foreground text-background' : 'bg-muted text-muted-foreground'}`} onClick={() => setStatus(item)} data-testid={`button-support-filter-${item}`}>{titleCase(item)}</button>)}</div>{query.isLoading ? <LoadingBlock /> : query.isError ? <ErrorState retry={() => query.refetch()} /> : query.data?.items.length ? <div className="divide-y divide-border">{query.data.items.map((ticket: any) => <div key={ticket.id} className="grid gap-4 p-5 md:grid-cols-[1fr_1.6fr_auto] md:items-center" data-testid={`row-support-${ticket.id}`}><div><div className="flex items-center gap-2"><div className="grid h-9 w-9 place-items-center rounded-full bg-muted text-xs font-black text-primary">{initials(ticket.customerName)}</div><div><p className="font-bold">{ticket.customerName}</p><p className="mt-1 font-mono text-[10px] text-muted-foreground">{ticket.ticketNumber}</p></div></div><p className="mt-3 font-mono text-[10px] text-muted-foreground">{date(ticket.updatedAt)}</p></div><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="font-extrabold">{ticket.subject}</h3><Badge tone={ticket.status === 'created' ? 'orange' : ticket.status === 'closed' ? 'neutral' : 'blue'}>{titleCase(ticket.status)}</Badge></div><p className="mt-2 truncate text-sm text-muted-foreground">{ticket.lastMessage}</p></div><Button variant="secondary" className="text-xs" onClick={() => setConversationId(ticket.id)} data-testid={`button-view-ticket-${ticket.id}`}><Headphones size={14} /> View conversation</Button></div>)}</div> : <EmptyState icon={Headphones} title="Support queue is quiet" body="Open customer conversations will appear here." />}</Card>{conversationId && <SupportConversationModal ticketId={conversationId} onClose={() => setConversationId(null)} />}</div>; }
 
-function Analytics() { const [from, setFrom] = useState(() => new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10)); const [to, setTo] = useState(() => new Date().toISOString().slice(0, 10)); const query = useGetAnalyticsSummary({ from, to }, { query: { queryKey: getGetAnalyticsSummaryQueryKey({ from, to }), staleTime: 60_000 } }); return <div className="animate-rise"><PageIntro eyebrow="Business intelligence" title="Analytics" description="Read performance in the same language as the operation: revenue, throughput, retention, and friction." action={<div className="flex gap-2"><Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="w-auto" data-testid="input-analytics-from" /><Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-auto" data-testid="input-analytics-to" /></div>} />{query.isLoading ? <LoadingBlock /> : query.isError || !query.data ? <Card><ErrorState retry={() => query.refetch()} /></Card> : <><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><StatCard label="Revenue" value={money(query.data.revenueUsd)} sub="Selected period" icon={CircleDollarSign} /><StatCard label="Orders" value={query.data.orderCount} sub="Completed and active" icon={ShoppingBag} tone="blue" /><StatCard label="Average order" value={money(query.data.averageOrderValueUsd)} sub="Per order" icon={ArrowUpRight} tone="orange" /><StatCard label="New customers" value={query.data.newCustomers} sub={`${query.data.returningCustomers} returning`} icon={Users} /></div><div className="mt-4 grid gap-4 xl:grid-cols-2"><MetricList title="Revenue by payment method" items={query.data.revenueByPaymentMethod} format={money} icon={CreditCard} /><MetricList title="Top products" items={query.data.topProducts} format={money} icon={Package} /><Card className="p-5"><div className="flex items-center justify-between"><div><p className="text-xs font-bold uppercase tracking-[.08em] text-muted-foreground">Customer loop</p><h3 className="mt-1 text-lg font-extrabold">Retention signals</h3></div><Activity size={19} className="text-primary" /></div><div className="mt-5 grid grid-cols-2 gap-3"><MiniMetric label="Returning customers" value={query.data.returningCustomers} /><MiniMetric label="Cashback issued" value={money(query.data.cashbackIssuedUsd)} /><MiniMetric label="Referral rewards" value={money(query.data.referralRewardsIssuedUsd)} /><MiniMetric label="Cancelled orders" value={query.data.cancelledOrders} /></div></Card><Card className="p-5"><div className="flex items-center justify-between"><div><p className="text-xs font-bold uppercase tracking-[.08em] text-muted-foreground">Operations quality</p><h3 className="mt-1 text-lg font-extrabold">Friction to watch</h3></div><ShieldCheck size={19} className="text-primary" /></div><div className="mt-5 rounded-xl bg-muted/60 p-4"><p className="text-sm font-bold">Payment confirmation</p><p className="mt-2 font-mono text-3xl font-bold text-primary">{query.data.paymentConfirmationMinutes}<span className="ml-1 text-sm text-muted-foreground">min avg.</span></p><div className="mt-3 h-2 overflow-hidden rounded-full bg-border"><div className="h-full rounded-full bg-primary" style={{ width: `${Math.min(100, Math.max(12, 100 - query.data.paymentConfirmationMinutes * 2))}%` }} /></div></div></Card></div></>}</div>; }
+function Analytics() {
+  const [from, setFrom] = useState(() => new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10));
+  const [to, setTo] = useState(() => new Date().toISOString().slice(0, 10));
+  const query = useGetAnalyticsSummary(
+    { from, to },
+    { query: { queryKey: getGetAnalyticsSummaryQueryKey({ from, to }), staleTime: 60_000 } },
+  );
+  return <div className="animate-rise">
+    <PageIntro
+      eyebrow="Business intelligence"
+      title="Analytics"
+      description="Read performance in the same language as the operation: revenue, throughput, retention, and friction."
+      action={<div className="flex gap-2"><Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="w-auto" data-testid="input-analytics-from" /><Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-auto" data-testid="input-analytics-to" /></div>}
+    />
+    {query.isLoading ? <LoadingBlock /> : query.isError || !query.data ? <Card><ErrorState retry={() => query.refetch()} /></Card> : <>
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <StatCard label="Revenue" value={money(query.data.revenueUsd)} sub="Selected period" icon={CircleDollarSign} />
+        <StatCard label="Tracked acquisition cost" value={money(query.data.acquisitionCostUsd)} sub={`${query.data.costedOrderCount} delivered orders with cost`} icon={Boxes} tone="orange" />
+        <StatCard label="Realized profit" value={money(query.data.realizedProfitUsd)} sub="Revenue minus recorded cost" icon={ArrowUpRight} tone="blue" />
+        <StatCard label="Orders" value={query.data.orderCount} sub="Completed and active" icon={ShoppingBag} tone="blue" />
+        <StatCard label="Average order" value={money(query.data.averageOrderValueUsd)} sub="Per order" icon={ArrowUpRight} tone="orange" />
+        <StatCard label="New customers" value={query.data.newCustomers} sub={`${query.data.returningCustomers} returning`} icon={Users} />
+      </div>
+      <div className="mt-4 grid gap-4 xl:grid-cols-2">
+        <MetricList title="Revenue by payment method" items={query.data.revenueByPaymentMethod} format={money} icon={CreditCard} />
+        <MetricList title="Top products" items={query.data.topProducts} format={money} icon={Package} />
+        <Card className="p-5">
+          <div className="flex items-center justify-between"><div><p className="text-xs font-bold uppercase tracking-[.08em] text-muted-foreground">Customer loop</p><h3 className="mt-1 text-lg font-extrabold">Retention signals</h3></div><Activity size={19} className="text-primary" /></div>
+          <div className="mt-5 grid grid-cols-2 gap-3"><MiniMetric label="Returning customers" value={query.data.returningCustomers} /><MiniMetric label="Cashback issued" value={money(query.data.cashbackIssuedUsd)} /><MiniMetric label="Referral rewards" value={money(query.data.referralRewardsIssuedUsd)} /><MiniMetric label="Cancelled orders" value={query.data.cancelledOrders} /></div>
+        </Card>
+        <Card className="p-5">
+          <div className="flex items-center justify-between"><div><p className="text-xs font-bold uppercase tracking-[.08em] text-muted-foreground">Operations quality</p><h3 className="mt-1 text-lg font-extrabold">Friction to watch</h3></div><ShieldCheck size={19} className="text-primary" /></div>
+          <div className="mt-5 rounded-xl bg-muted/60 p-4"><p className="text-sm font-bold">Payment confirmation</p><p className="mt-2 font-mono text-3xl font-bold text-primary">{query.data.paymentConfirmationMinutes}<span className="ml-1 text-sm text-muted-foreground">min avg.</span></p><div className="mt-3 h-2 overflow-hidden rounded-full bg-border"><div className="h-full rounded-full bg-primary" style={{ width: `${Math.min(100, Math.max(12, 100 - query.data.paymentConfirmationMinutes * 2))}%` }} /></div></div>
+        </Card>
+      </div>
+    </>}
+  </div>;
+}
 function MetricList({ title, items, format, icon: Icon }: { title: string; items: any[]; format: (value: number) => string; icon: LucideIcon }) { const max = Math.max(...items.map((item) => item.value), 1); return <Card className="p-5"><div className="flex items-center gap-3"><div className="rounded-xl bg-primary/10 p-2.5 text-primary"><Icon size={18} /></div><h3 className="font-extrabold">{title}</h3></div><div className="mt-5 grid gap-4">{items.length ? items.map((item) => <div key={item.label}><div className="mb-1.5 flex justify-between text-xs font-bold"><span>{item.label}</span><span className="font-mono">{format(item.value)}</span></div><div className="h-2 rounded-full bg-muted"><div className="h-full rounded-full bg-primary transition-all" style={{ width: `${(item.value / max) * 100}%` }} /></div></div>) : <p className="text-sm text-muted-foreground">No data for this period.</p>}</div></Card>; }
 function MiniMetric({ label, value }: { label: string; value: string | number }) { return <div className="rounded-xl border border-border bg-background p-3"><p className="text-[10px] font-bold uppercase tracking-[.08em] text-muted-foreground">{label}</p><p className="mt-2 font-mono text-lg font-bold">{value}</p></div>; }
 
@@ -367,7 +486,53 @@ function Settings() { const query = useGetStoreSettings({ query: { queryKey: get
 
 function AuditLogs() { return <div className="animate-rise"><PageIntro eyebrow="Accountability" title="Audit logs" description="A durable history of operator actions, available when the audit stream is connected." /><Card><EmptyState icon={FileClock} title="Audit stream is not connected" body="The current API exposes the audit-log surface but no activity list hook yet. This view is ready for the audit feed when it is available." /></Card></div>; }
 
-function Login() { const [, setLocation] = useLocation(); const login = useAdminLogin(); const [email, setEmail] = useState(''); const [password, setPassword] = useState(''); const [error, setError] = useState(''); const submit = (event: FormEvent) => { event.preventDefault(); setError(''); login.mutate({ data: { email, password } }, { onSuccess: () => setLocation('/'), onError: () => setError('Email or password could not be verified.') }); }; return <div className="noise flex min-h-[100dvh] items-center justify-center bg-sidebar px-5 py-10 text-sidebar-foreground"><div className="grid w-full max-w-5xl overflow-hidden rounded-3xl border border-sidebar-border bg-sidebar md:grid-cols-[.9fr_1.1fr]"><div className="data-grid hidden min-h-[620px] flex-col justify-between bg-sidebar-accent/50 p-10 md:flex"><div><div className="flex items-center gap-3"><span className="grid h-10 w-10 place-items-center rounded-xl bg-sidebar-primary text-sidebar-primary-foreground"><KeyRound size={19} /></span><span className="font-extrabold">KeyTopia</span></div><p className="mt-28 max-w-sm text-4xl font-extrabold leading-[1.05] tracking-[-.06em]">Keep the store moving.</p><p className="mt-5 max-w-sm text-sm leading-6 text-sidebar-foreground/58">A calm command center for payment review, digital fulfillment, and customer care.</p></div><div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[.18em] text-sidebar-foreground/42"><ShieldCheck size={14} className="text-sidebar-primary" /> Operator access only</div></div><div className="bg-card p-7 text-card-foreground md:p-12"><div className="mb-12 md:hidden"><div className="flex items-center gap-3"><span className="grid h-10 w-10 place-items-center rounded-xl bg-primary text-primary-foreground"><KeyRound size={19} /></span><span className="font-extrabold">KeyTopia</span></div></div><p className="font-mono text-[10px] font-bold uppercase tracking-[.2em] text-primary">Secure sign-in</p><h1 className="mt-3 text-3xl font-extrabold tracking-[-.05em]">Welcome back.</h1><p className="mt-3 text-sm leading-6 text-muted-foreground">Sign in to manage the storefront operation.</p><form onSubmit={submit} className="mt-9 grid gap-5"><Field label="Email"><Input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="operator@keytopia.store" data-testid="input-login-email" /></Field><Field label="Password"><Input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Enter your password" data-testid="input-login-password" /></Field>{error && <div className="rounded-lg bg-destructive/10 px-3 py-2.5 text-sm font-bold text-destructive" data-testid="status-login-error">{error}</div>}<Button type="submit" className="mt-2 h-11 w-full" disabled={login.isPending} data-testid="button-login">{login.isPending ? 'Verifying access...' : 'Enter control room'} <ArrowUpRight size={16} /></Button></form><p className="mt-8 text-center font-mono text-[10px] uppercase tracking-[.16em] text-muted-foreground">Protected operations environment</p></div></div></div>; }
+function Login() {
+  const [, setLocation] = useLocation();
+  const login = useAdminLogin();
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    setError('');
+    login.mutate(
+      { data: { email, password } },
+      {
+        onSuccess: (session) => {
+          updateAdminSessionCache(session);
+          setLocation('/');
+        },
+        onError: () => setError('Email or password could not be verified.'),
+      },
+    );
+  };
+
+  return <div className="noise flex min-h-[100dvh] items-center justify-center bg-sidebar px-5 py-10 text-sidebar-foreground">
+    <div className="grid w-full max-w-5xl overflow-hidden rounded-3xl border border-sidebar-border bg-sidebar md:grid-cols-[.9fr_1.1fr]">
+      <div className="data-grid hidden min-h-[620px] flex-col justify-between bg-sidebar-accent/50 p-10 md:flex">
+        <div>
+          <div className="flex items-center gap-3"><span className="grid h-10 w-10 place-items-center rounded-xl bg-sidebar-primary text-sidebar-primary-foreground"><KeyRound size={19} /></span><span className="font-extrabold">KeyTopia</span></div>
+          <p className="mt-28 max-w-sm text-4xl font-extrabold leading-[1.05] tracking-[-.06em]">Keep the store moving.</p>
+          <p className="mt-5 max-w-sm text-sm leading-6 text-sidebar-foreground/58">A calm command center for payment review, digital fulfillment, and customer care.</p>
+        </div>
+        <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[.18em] text-sidebar-foreground/42"><ShieldCheck size={14} className="text-sidebar-primary" /> Operator access only</div>
+      </div>
+      <div className="bg-card p-7 text-card-foreground md:p-12">
+        <div className="mb-12 md:hidden"><div className="flex items-center gap-3"><span className="grid h-10 w-10 place-items-center rounded-xl bg-primary text-primary-foreground"><KeyRound size={19} /></span><span className="font-extrabold">KeyTopia</span></div></div>
+        <p className="font-mono text-[10px] font-bold uppercase tracking-[.2em] text-primary">Secure sign-in</p>
+        <h1 className="mt-3 text-3xl font-extrabold tracking-[-.05em]">Welcome back.</h1>
+        <p className="mt-3 text-sm leading-6 text-muted-foreground">Sign in to manage the storefront operation.</p>
+        <form onSubmit={submit} className="mt-9 grid gap-5">
+          <Field label="Email"><Input type="email" autoComplete="username" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="operator@keytopia.store" data-testid="input-login-email" /></Field>
+          <Field label="Password"><Input type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Enter your password" data-testid="input-login-password" /></Field>
+          {error && <div className="rounded-lg bg-destructive/10 px-3 py-2.5 text-sm font-bold text-destructive" data-testid="status-login-error">{error}</div>}
+          <Button type="submit" className="mt-2 h-11 w-full" disabled={login.isPending} data-testid="button-login">{login.isPending ? 'Verifying access...' : 'Enter control room'} <ArrowUpRight size={16} /></Button>
+        </form>
+        <p className="mt-8 text-center font-mono text-[10px] uppercase tracking-[.16em] text-muted-foreground">Protected operations environment</p>
+      </div>
+    </div>
+  </div>;
+}
 
 function NotFound() { return <div className="grid min-h-[100dvh] place-items-center bg-background p-5 text-center"><div><p className="font-mono text-xs font-bold uppercase tracking-[.2em] text-primary">404 / outside the map</p><h1 className="mt-3 text-5xl font-extrabold tracking-[-.06em]">Nothing here.</h1><p className="mt-3 text-muted-foreground">The operation you requested does not exist.</p><Link href="/" className="mt-6 inline-flex rounded-lg bg-primary px-4 py-2 text-sm font-bold text-primary-foreground" data-testid="link-back-overview">Return to overview</Link></div></div>; }
 

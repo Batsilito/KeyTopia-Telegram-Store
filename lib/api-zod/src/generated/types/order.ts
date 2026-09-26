@@ -15,6 +15,10 @@ export interface Order {
   customerName: string;
   productName: string;
   priceUsd: number;
+  /** @nullable */
+  acquisitionCostUsd: number | null;
+  /** @nullable */
+  realizedProfitUsd: number | null;
   paymentMethod: OrderPaymentMethod;
   status: OrderStatus;
   deliveryType: OrderDeliveryType;

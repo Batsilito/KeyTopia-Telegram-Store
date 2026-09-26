@@ -9,4 +9,9 @@
 export interface DeliveryInput {
   /** @minLength 1 */
   deliveryInfo: string;
+  /**
+     * @minimum 0
+     * @maximum 9999999999.99
+     */
+  acquisitionCostUsd: number;
 }

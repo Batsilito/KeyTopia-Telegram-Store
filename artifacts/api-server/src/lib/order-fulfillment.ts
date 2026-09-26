@@ -1,6 +1,7 @@
 import { and, asc, eq, inArray, isNull, notLike } from "drizzle-orm";
 import { db, inventoryItems, inventoryReservations, orders, products } from "@workspace/db";
 import { MANUAL_STOCK_UNIT_PREFIX } from "./manual-stock-units";
+import { sumKnownUnitCosts } from "./profit-accounting";
 
 export type AutomaticFulfillmentResult = {
   order: typeof orders.$inferSelect;
@@ -30,10 +31,15 @@ export async function fulfillAutomaticOrder(
     }
 
     let deliveryInfo = "";
+    let acquisitionCostUsd: string | null = null;
     if ((row.order.stockTypeSnapshot ?? row.product.stockType) === "limited") {
       const reserved = row.order.checkoutSessionId
         ? await tx
-            .select({ id: inventoryItems.id, secretValue: inventoryItems.secretValue })
+            .select({
+              id: inventoryItems.id,
+              secretValue: inventoryItems.secretValue,
+              unitCostUsd: inventoryItems.unitCostUsd,
+            })
             .from(inventoryReservations)
             .innerJoin(inventoryItems, eq(inventoryReservations.inventoryItemId, inventoryItems.id))
             .where(and(
@@ -50,6 +56,7 @@ export async function fulfillAutomaticOrder(
         .select({
           id: inventoryItems.id,
           secretValue: inventoryItems.secretValue,
+          unitCostUsd: inventoryItems.unitCostUsd,
         })
         .from(inventoryItems)
         .where(
@@ -80,10 +87,16 @@ export async function fulfillAutomaticOrder(
             eq(inventoryItems.status, expectedStatus),
           ),
         )
-        .returning({ secretValue: inventoryItems.secretValue });
+        .returning({
+          secretValue: inventoryItems.secretValue,
+          unitCostUsd: inventoryItems.unitCostUsd,
+        });
       if (claimed.length !== row.order.quantity) {
         throw new Error(`Unable to claim inventory for order ${row.order.orderNumber}`);
       }
+      acquisitionCostUsd = sumKnownUnitCosts(
+        claimed.map((item) => item.unitCostUsd),
+      );
       if (row.order.checkoutSessionId) {
         await tx.update(inventoryReservations)
           .set({ releasedAt: new Date() })
@@ -108,6 +121,7 @@ export async function fulfillAutomaticOrder(
       .update(orders)
       .set({
         deliveryInfo,
+        acquisitionCostUsd,
         status: "delivered",
         deliveredAt: new Date(),
         updatedAt: new Date(),
