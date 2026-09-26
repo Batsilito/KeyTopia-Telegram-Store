@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  createTelegramProductLink,
   createTelegramReferralLink,
   createTelegramShopLink,
   parseTelegramStartPayload,
@@ -25,5 +26,18 @@ test("referral deep links keep their referral code payload", () => {
   assert.deepEqual(parseTelegramStartPayload("KT123"), {
     openShop: false,
     referralCode: "KT123",
+  });
+});
+
+test("product deep links open the bot with the product selected", () => {
+  const productId = "00000000-0000-4000-8000-000000000001";
+  assert.equal(
+    createTelegramProductLink(productId),
+    `https://t.me/KeyTopiaStore_bot?start=product_${productId}`,
+  );
+  assert.deepEqual(parseTelegramStartPayload(`product_${productId}`), {
+    openShop: false,
+    productId,
+    referralCode: undefined,
   });
 });

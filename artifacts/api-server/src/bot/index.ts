@@ -37,12 +37,12 @@ import {
   VERIFIED_REFERRAL_REWARD_USD,
 } from "../lib/reward-policy";
 import { t, type BotLanguage } from "./locales";
+import { createChannelBuyNowKeyboard } from "./channel-buy-keyboard";
 import { createProductShopButton, isValidTelegramCustomEmojiId } from "./shop-product-button";
 import { createProductDetailsMessage } from "./product-details-message";
 import { createProductPriceChangeMessage } from "./product-price-change-message";
 import {
   createTelegramReferralLink,
-  createTelegramShopLink,
   parseTelegramStartPayload,
 } from "./telegram-links";
 import { createOrderDeliveryMessage } from "./order-delivery-message";
@@ -238,10 +238,6 @@ function languageKeyboard() {
   return new InlineKeyboard()
     .text("🇬🇧 English", "language:en")
     .text("🇸🇦 العربية", "language:ar");
-}
-
-function buyNowKeyboard() {
-  return new InlineKeyboard().url("Buy now", createTelegramShopLink());
 }
 
 function paymentMethodLabel(method: string, language?: BotLanguage) {
@@ -571,7 +567,7 @@ async function broadcastProductRestockedToChannel(
   try {
     await telegramBot.api.sendMessage(channel, message, {
       parse_mode: "HTML",
-      reply_markup: buyNowKeyboard(),
+      reply_markup: createChannelBuyNowKeyboard(product.id),
     });
   } catch (error) {
     logger.warn(
@@ -616,7 +612,7 @@ export async function broadcastProductPriceChange(
   try {
     await telegramBot.api.sendMessage(channel, message, {
       parse_mode: "HTML",
-      reply_markup: buyNowKeyboard(),
+      reply_markup: createChannelBuyNowKeyboard(product.id),
     });
     return true;
   } catch (error) {
@@ -683,7 +679,7 @@ async function broadcastFlashSaleToChannel(
       flashSaleMessage(sale, product, "en", reminder),
       {
         parse_mode: "HTML",
-        reply_markup: buyNowKeyboard(),
+        reply_markup: createChannelBuyNowKeyboard(product.id),
       },
     );
   } catch (error) {
@@ -2101,8 +2097,13 @@ async function showShop(
   }
 }
 
-async function showProduct(ctx: Context, user: typeof users.$inferSelect, productId: string) {
-  if (!(await ensureAccess(ctx, user))) return;
+async function showProduct(
+  ctx: Context,
+  user: typeof users.$inferSelect,
+  productId: string,
+  accessAlreadyChecked = false,
+) {
+  if (!accessAlreadyChecked && !(await ensureAccess(ctx, user))) return;
   const rows = await db.select().from(products).where(and(eq(products.id, productId), eq(products.active, true))).limit(1);
   const product = rows[0];
   if (!product) return;
@@ -2662,12 +2663,17 @@ export function buildTelegramBot() {
       user.createdAt.getTime() === user.updatedAt.getTime();
     if (firstStart) {
       if (await ensureAccess(ctx, user)) {
-        if (startPayload.openShop) await showShop(ctx, user, false, true);
+        if (startPayload.productId) await showProduct(ctx, user, startPayload.productId, true);
+        else if (startPayload.openShop) await showShop(ctx, user, false, true);
         else await showHome(ctx, user);
         await ctx.reply(t("en", "chooseLanguage"), {
           reply_markup: languageKeyboard(),
         });
       }
+      return;
+    }
+    if (startPayload.productId) {
+      await showProduct(ctx, user, startPayload.productId);
       return;
     }
     if (startPayload.openShop) {
