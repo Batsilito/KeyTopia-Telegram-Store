@@ -1,5 +1,6 @@
-import { and, asc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, notLike } from "drizzle-orm";
 import { db, inventoryItems, inventoryReservations, orders, products } from "@workspace/db";
+import { MANUAL_STOCK_UNIT_PREFIX } from "./manual-stock-units";
 
 export type AutomaticFulfillmentResult = {
   order: typeof orders.$inferSelect;
@@ -38,6 +39,7 @@ export async function fulfillAutomaticOrder(
             .where(and(
               eq(inventoryReservations.checkoutSessionId, row.order.checkoutSessionId),
               eq(inventoryItems.status, "reserved"),
+              notLike(inventoryItems.secretValue, `${MANUAL_STOCK_UNIT_PREFIX}%`),
             ))
             .orderBy(asc(inventoryItems.createdAt))
             .limit(row.order.quantity)
@@ -54,6 +56,7 @@ export async function fulfillAutomaticOrder(
           and(
             eq(inventoryItems.productId, row.order.productId),
             eq(inventoryItems.status, "available"),
+            notLike(inventoryItems.secretValue, `${MANUAL_STOCK_UNIT_PREFIX}%`),
           ),
         )
         .orderBy(asc(inventoryItems.createdAt))

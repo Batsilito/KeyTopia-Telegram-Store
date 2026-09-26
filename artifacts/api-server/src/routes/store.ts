@@ -76,6 +76,10 @@ import {
   validateTelegramCustomEmojiId,
 } from "../bot";
 import {
+  createManualStockUnitValue,
+  isManualStockUnitValue,
+} from "../lib/manual-stock-units";
+import {
   manuallyConfirmWalletTopUp,
   testBinanceApiConnectivity,
   upsertTelegramPaymentNotification,
@@ -473,7 +477,9 @@ router.get("/inventory", async (req, res) => {
       id: row.item.id,
       productId: row.item.productId,
       productName: row.productName,
-      maskedValue: `${row.item.secretValue.slice(0, 3)}••••${row.item.secretValue.slice(-3)}`,
+      maskedValue: isManualStockUnitValue(row.item.secretValue)
+        ? "Manual stock unit"
+        : `${row.item.secretValue.slice(0, 3)}••••${row.item.secretValue.slice(-3)}`,
       status: row.item.status,
       orderNumber: row.orderNumber ?? null,
       createdAt: row.item.createdAt.toISOString(),
@@ -489,34 +495,60 @@ router.post("/inventory", async (req, res) => {
   if (!requireSuperAdmin(admin, res)) return;
   const parsed = ImportInventoryBody.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid inventory import" });
-  const submittedValues = parsed.data.values.map((value) => value.trim()).filter(Boolean);
-  const values = Array.from(new Set(submittedValues));
+  const productRows = await db.select().from(products).where(eq(products.id, parsed.data.productId)).limit(1);
+  const selectedProduct = productRows[0];
+  if (!selectedProduct) return res.status(404).json({ error: "Product not found" });
+
+  const isManualProduct = selectedProduct.deliveryType === "manual";
+  if (isManualProduct && (parsed.data.quantity === undefined || parsed.data.values !== undefined)) {
+    return res.status(400).json({ error: "Manual-delivery products require a stock quantity" });
+  }
+  if (!isManualProduct && (parsed.data.values === undefined || parsed.data.quantity !== undefined)) {
+    return res.status(400).json({ error: "Automatic-delivery products require inventory values" });
+  }
+
+  const submittedValues = isManualProduct
+    ? Array.from({ length: parsed.data.quantity! }, () => createManualStockUnitValue())
+    : parsed.data.values!.map((value) => value.trim()).filter(Boolean);
+  const values = isManualProduct ? submittedValues : Array.from(new Set(submittedValues));
   if (values.length === 0) return res.status(400).json({ error: "At least one inventory value is required" });
+  if (!isManualProduct && values.some(isManualStockUnitValue)) {
+    return res.status(400).json({ error: "Inventory values cannot use the internal stock-unit prefix" });
+  }
   const hashes = values.map((value) => createValueHash(value));
-  const existing = await db
-    .select({ valueHash: inventoryItems.valueHash })
-    .from(inventoryItems)
-    .where(inArray(inventoryItems.valueHash, hashes));
-  const existingHashes = new Set(existing.map((row) => row.valueHash));
-  const fresh = values
-    .map((value, index) => ({ value, hash: hashes[index] }))
-    .filter((row) => !existingHashes.has(row.hash));
-  const imported = fresh.length > 0
-    ? await db.insert(inventoryItems).values(
-      fresh.map((item) => ({
-        productId: parsed.data.productId,
-        secretValue: item.value,
-        valueHash: item.hash,
-      })),
-    ).onConflictDoNothing({ target: inventoryItems.valueHash }).returning({ id: inventoryItems.id })
-    : [];
+  const imported = await db.transaction(async (tx) => {
+    const existing = await tx
+      .select({ valueHash: inventoryItems.valueHash })
+      .from(inventoryItems)
+      .where(inArray(inventoryItems.valueHash, hashes));
+    const existingHashes = new Set(existing.map((row) => row.valueHash));
+    const fresh = values
+      .map((value, index) => ({ value, hash: hashes[index] }))
+      .filter((row) => !existingHashes.has(row.hash));
+    const inserted = fresh.length > 0
+      ? await tx.insert(inventoryItems).values(
+        fresh.map((item) => ({
+          productId: parsed.data.productId,
+          secretValue: item.value,
+          valueHash: item.hash,
+        })),
+      ).onConflictDoNothing({ target: inventoryItems.valueHash }).returning({ id: inventoryItems.id })
+      : [];
+    if (isManualProduct && selectedProduct.stockType !== "limited") {
+      await tx.update(products)
+        .set({ stockType: "limited", updatedAt: new Date() })
+        .where(eq(products.id, selectedProduct.id));
+    }
+    return inserted;
+  });
   const available = await db
     .select({ total: count() })
     .from(inventoryItems)
     .where(and(eq(inventoryItems.productId, parsed.data.productId), eq(inventoryItems.status, "available")));
-  const product = await db.select().from(products).where(eq(products.id, parsed.data.productId)).limit(1);
-  if (imported.length > 0 && product[0]?.active) {
-    void broadcastProductRestocked(product[0], imported.length, Number(available[0]?.total ?? 0));
+  const updatedProductRows = await db.select().from(products).where(eq(products.id, parsed.data.productId)).limit(1);
+  const product = updatedProductRows[0];
+  if (imported.length > 0 && product?.active) {
+    void broadcastProductRestocked(product, imported.length, Number(available[0]?.total ?? 0));
   }
   res.status(201).json({
     imported: imported.length,
@@ -538,7 +570,9 @@ router.post("/inventory/:inventoryId/disable", async (req, res) => {
     id: rows[0].id,
     productId: rows[0].productId,
     productName: "",
-    maskedValue: `${rows[0].secretValue.slice(0, 3)}••••${rows[0].secretValue.slice(-3)}`,
+    maskedValue: isManualStockUnitValue(rows[0].secretValue)
+      ? "Manual stock unit"
+      : `${rows[0].secretValue.slice(0, 3)}••••${rows[0].secretValue.slice(-3)}`,
     status: rows[0].status,
     orderNumber: null,
     createdAt: rows[0].createdAt.toISOString(),

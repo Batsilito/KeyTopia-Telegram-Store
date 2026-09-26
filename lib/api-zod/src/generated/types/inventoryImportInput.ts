@@ -12,5 +12,10 @@ export interface InventoryImportInput {
      * @minItems 1
      * @items.minLength 1
      */
-  values: string[];
+  values?: string[];
+  /**
+     * @minimum 1
+     * @maximum 1000
+     */
+  quantity?: number;
 }

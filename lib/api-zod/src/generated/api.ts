@@ -372,15 +372,18 @@ export const ListInventoryResponse = zod.object({
 
 
 /**
- * @summary Import one inventory item per line
+ * @summary Add stock values for automatic products or a quantity for manual products
  */
 
+
+export const importInventoryBodyQuantityMax = 1000;
 
 
 
 export const ImportInventoryBody = zod.object({
   "productId": zod.string().uuid(),
-  "values": zod.array(zod.string().min(1)).min(1)
+  "values": zod.array(zod.string().min(1)).min(1).optional(),
+  "quantity": zod.number().int().min(1).max(importInventoryBodyQuantityMax).optional()
 })
 
 export const ImportInventoryResponse = zod.object({

@@ -993,7 +993,7 @@ export const getImportInventoryUrl = () => {
 }
 
 /**
- * @summary Import one inventory item per line
+ * @summary Add stock values for automatic products or a quantity for manual products
  */
 export const importInventory = async (inventoryImportInput: InventoryImportInput, options?: Parameters<typeof customFetch>[1]): Promise<InventoryImportResult> => {
 
@@ -1059,7 +1059,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type ImportInventoryMutationVariables = {data: BodyType<InventoryImportInput>}
 
     /**
- * @summary Import one inventory item per line
+ * @summary Add stock values for automatic products or a quantity for manual products
  */
 export const useImportInventory = <TError = ErrorType<unknown>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof importInventory>>, TError,ImportInventoryMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}

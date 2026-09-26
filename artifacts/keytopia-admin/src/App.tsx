@@ -226,6 +226,7 @@ async function readInventorySpreadsheet(file: File) {
 function Inventory() {
   const [productId, setProductId] = useState('');
   const [importText, setImportText] = useState('');
+  const [quantityText, setQuantityText] = useState('');
   const [fileName, setFileName] = useState('');
   const [fileError, setFileError] = useState('');
   const products = useListProducts({ page: 1, pageSize: 100, status: 'active' });
@@ -241,6 +242,18 @@ function Inventory() {
   };
   const totals = summary.data;
   const importValues = normalizeInventoryLines(importText);
+  const selectedProduct = products.data?.items.find((product) => product.id === productId);
+  const isManualProduct = selectedProduct?.deliveryType === 'manual';
+  const quantityToAdd = Number(quantityText);
+  const validQuantity = quantityText !== '' && Number.isInteger(quantityToAdd) && quantityToAdd >= 1 && quantityToAdd <= 1000;
+  const changeProduct = (nextProductId: string) => {
+    importMutation.reset();
+    setProductId(nextProductId);
+    setImportText('');
+    setQuantityText('');
+    setFileName('');
+    setFileError('');
+  };
   const handleSpreadsheet = async (file: File | undefined) => {
     if (!file) return;
     setFileError('');
@@ -254,7 +267,58 @@ function Inventory() {
       setFileError(error instanceof Error ? error.message : 'Unable to read this spreadsheet.');
     }
   };
-  return <div className="animate-rise"><PageIntro eyebrow="Stock room" title="Inventory" description="Protect fulfillment quality with a masked, operator-safe view of digital stock." action={<Button variant="secondary" onClick={refresh} data-testid="button-refresh-inventory"><RefreshCw size={15} /> Refresh</Button>} /><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">{[['Total items', totals?.total ?? 0, Database], ['Available', totals?.available ?? 0, Check], ['Reserved', totals?.reserved ?? 0, Clock3], ['Delivered', totals?.delivered ?? 0, Truck], ['Low-stock products', totals?.lowStockProducts ?? 0, Bell]].map(([label, value, Icon]: any) => <Card key={label as string} className="p-4"><div className="flex items-center justify-between"><span className="text-xs font-bold uppercase tracking-[.08em] text-muted-foreground">{label}</span><Icon size={16} className="text-primary" /></div><p className="mt-3 font-mono text-2xl font-bold">{value}</p></Card>)}</div><div className="mt-4 grid gap-4 xl:grid-cols-[.75fr_1.25fr]"><Card className="p-5"><div className="flex items-center gap-3"><div className="rounded-xl bg-accent/15 p-2.5 text-accent-foreground"><Archive size={18} /></div><div><h3 className="font-extrabold">Import inventory</h3><p className="mt-1 text-xs text-muted-foreground">One stock value per line. Duplicate values are skipped.</p></div></div><div className="mt-5 grid gap-4"><Field label="Product"><Select value={productId} onChange={(e) => setProductId(e.target.value)} data-testid="select-import-product"><option value="">Choose a product</option>{products.data?.items.map((product: any) => <option key={product.id} value={product.id}>{product.nameEn}</option>)}</Select></Field><Field label="Values" hint="Manual entry: put one item on each line. Excel import: each non-empty row becomes one item."><Textarea value={importText} onChange={(e) => { setImportText(e.target.value); setFileName(''); setFileError(''); }} placeholder={'KEY-7H3K-9P2L\\nKEY-1Q8M-4Z6N'} data-testid="textarea-inventory-values" /><div className="mt-2 flex flex-wrap items-center gap-3"><label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs font-extrabold transition hover:bg-muted"><FileSpreadsheet size={15} className="text-primary" /> Upload Excel / CSV<input type="file" accept=".xlsx,.xls,.csv" className="sr-only" onChange={(e) => { void handleSpreadsheet(e.target.files?.[0]); e.currentTarget.value = ''; }} data-testid="input-inventory-spreadsheet" /></label>{fileName && <span className="text-xs font-bold text-primary">{fileName} · {importValues.length} items loaded</span>}{importValues.length > 0 && <span className="text-xs text-muted-foreground">{importValues.length} unique items ready</span>}</div>{fileError && <p className="mt-2 text-xs font-bold text-destructive">{fileError}</p>}</Field><Button disabled={!productId || importValues.length === 0 || importMutation.isPending} onClick={() => importMutation.mutate({ data: { productId, values: importValues } }, { onSuccess: () => { setImportText(''); setFileName(''); refresh(); } })} data-testid="button-import-inventory"><Plus size={15} /> Import {importValues.length || ''} values</Button>{importMutation.data && <div className="rounded-lg bg-primary/10 p-3 text-xs font-bold text-primary">Imported {importMutation.data.imported} values · {importMutation.data.skippedDuplicates} duplicates skipped.</div>}</div></Card><Card><div className="flex flex-col justify-between gap-3 border-b border-border p-5 md:flex-row md:items-center"><div><h3 className="font-extrabold">Masked inventory</h3><p className="mt-1 text-xs text-muted-foreground">Sensitive values are never exposed in the console.</p></div><Select className="md:w-48" value={productId} onChange={(e) => setProductId(e.target.value)}><option value="">All products</option>{products.data?.items.map((product: any) => <option key={product.id} value={product.id}>{product.nameEn}</option>)}</Select></div>{query.isLoading ? <LoadingBlock /> : query.isError ? <ErrorState retry={() => query.refetch()} /> : query.data?.items.length ? <div className="overflow-x-auto"><table className="w-full min-w-[620px] text-left text-sm"><thead className="bg-muted/55 text-[10px] uppercase tracking-[.12em] text-muted-foreground"><tr><th className="px-5 py-3">Product</th><th className="px-4 py-3">Masked value</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Order</th><th className="px-5 py-3 text-right">Action</th></tr></thead><tbody className="divide-y divide-border">{query.data.items.map((item: any) => <tr key={item.id} data-testid={`row-inventory-${item.id}`}><td className="px-5 py-4 font-bold">{item.productName}</td><td className="px-4 py-4 font-mono text-xs">{item.maskedValue}</td><td className="px-4 py-4"><Badge tone={item.status === 'available' ? 'green' : item.status === 'disabled' ? 'red' : 'neutral'}>{item.status}</Badge></td><td className="px-4 py-4 font-mono text-xs text-muted-foreground">{item.orderNumber || '—'}</td><td className="px-5 py-4 text-right">{item.status === 'available' && <Button variant="quiet" className="text-xs text-destructive" onClick={() => disable.mutate({ inventoryId: item.id }, { onSuccess: refresh })} disabled={disable.isPending} data-testid={`button-disable-inventory-${item.id}`}>Disable</Button>}</td></tr>)}</tbody></table></div> : <EmptyState icon={Boxes} title="No inventory found" body="Import stock values above to populate this view." />}</Card></div></div>;
+  const addStock = () => {
+    if (!productId || importMutation.isPending) return;
+    if (isManualProduct) {
+      if (!validQuantity) return;
+      importMutation.mutate(
+        { data: { productId, quantity: quantityToAdd } },
+        { onSuccess: () => { setQuantityText(''); refresh(); } },
+      );
+      return;
+    }
+    if (importValues.length === 0) return;
+    importMutation.mutate(
+      { data: { productId, values: importValues } },
+      { onSuccess: () => { setImportText(''); setFileName(''); refresh(); } },
+    );
+  };
+  return <div className="animate-rise">
+    <PageIntro eyebrow="Stock room" title="Inventory" description="Protect fulfillment quality with a masked, operator-safe view of digital stock." action={<Button variant="secondary" onClick={refresh} data-testid="button-refresh-inventory"><RefreshCw size={15} /> Refresh</Button>} />
+    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+      {[['Total items', totals?.total ?? 0, Database], ['Available', totals?.available ?? 0, Check], ['Reserved', totals?.reserved ?? 0, Clock3], ['Delivered', totals?.delivered ?? 0, Truck], ['Low-stock products', totals?.lowStockProducts ?? 0, Bell]].map(([label, value, Icon]: any) => <Card key={label as string} className="p-4"><div className="flex items-center justify-between"><span className="text-xs font-bold uppercase tracking-[.08em] text-muted-foreground">{label}</span><Icon size={16} className="text-primary" /></div><p className="mt-3 font-mono text-2xl font-bold">{value}</p></Card>)}
+    </div>
+    <div className="mt-4 grid gap-4 xl:grid-cols-[.75fr_1.25fr]">
+      <Card className="p-5">
+        <div className="flex items-center gap-3"><div className="rounded-xl bg-accent/15 p-2.5 text-accent-foreground"><Archive size={18} /></div><div><h3 className="font-extrabold">Add stock</h3><p className="mt-1 text-xs text-muted-foreground">{isManualProduct ? 'Set how many sellable pieces to add.' : 'Add one product value per line; duplicate values are skipped.'}</p></div></div>
+        <div className="mt-5 grid gap-4">
+          <Field label="Product"><Select value={productId} onChange={(e) => changeProduct(e.target.value)} data-testid="select-import-product"><option value="">Choose a product</option>{products.data?.items.map((product: any) => <option key={product.id} value={product.id}>{product.nameEn} · {product.deliveryType === 'manual' ? 'Manual' : 'Automatic'}</option>)}</Select></Field>
+          {isManualProduct ? <>
+            <Field label="Sellable pieces to add" hint="Each piece updates available stock by one and can be reserved for one checkout.">
+              <Input type="number" min="1" max="1000" step="1" value={quantityText} onChange={(e) => setQuantityText(e.target.value)} placeholder="Enter a quantity" data-testid="input-manual-stock-quantity" />
+            </Field>
+            {selectedProduct.stockType === 'unlimited' && <p className="rounded-lg bg-amber-500/10 p-3 text-xs font-semibold text-amber-800 dark:text-amber-200">This product is currently unlimited. Adding a quantity will switch it to limited stock so sales respect the available pieces.</p>}
+          </> : <>
+            <Field label="Product values" hint="Manual entry: put one item on each line. Excel / CSV: each non-empty row becomes one item.">
+              <Textarea value={importText} onChange={(e) => { setImportText(e.target.value); setFileName(''); setFileError(''); }} placeholder={'KEY-7H3K-9P2L\nKEY-1Q8M-4Z6N'} data-testid="textarea-inventory-values" />
+              <div className="mt-2 flex flex-wrap items-center gap-3">
+                <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs font-extrabold transition hover:bg-muted"><FileSpreadsheet size={15} className="text-primary" /> Upload Excel / CSV<input type="file" accept=".xlsx,.xls,.csv" className="sr-only" onChange={(e) => { void handleSpreadsheet(e.target.files?.[0]); e.currentTarget.value = ''; }} data-testid="input-inventory-spreadsheet" /></label>
+                {fileName && <span className="text-xs font-bold text-primary">{fileName} · {importValues.length} items loaded</span>}
+                {importValues.length > 0 && <span className="text-xs text-muted-foreground">{importValues.length} unique items ready</span>}
+              </div>
+              {fileError && <p className="mt-2 text-xs font-bold text-destructive">{fileError}</p>}
+            </Field>
+          </>}
+          <Button disabled={!productId || importMutation.isPending || (isManualProduct ? !validQuantity : importValues.length === 0)} onClick={addStock} data-testid="button-import-inventory"><Plus size={15} /> {isManualProduct ? `Add ${validQuantity ? quantityToAdd : ''} pieces` : `Import ${importValues.length || ''} values`}</Button>
+          {importMutation.data && <div className="rounded-lg bg-primary/10 p-3 text-xs font-bold text-primary">{isManualProduct ? `Added ${importMutation.data.imported} stock units.` : `Imported ${importMutation.data.imported} values · ${importMutation.data.skippedDuplicates} duplicates skipped.`} Available stock: {importMutation.data.available}.</div>}
+        </div>
+      </Card>
+      <Card>
+        <div className="flex flex-col justify-between gap-3 border-b border-border p-5 md:flex-row md:items-center"><div><h3 className="font-extrabold">Inventory</h3><p className="mt-1 text-xs text-muted-foreground">Credential values are masked; manual stock appears as unit counts.</p></div><Select className="md:w-48" value={productId} onChange={(e) => changeProduct(e.target.value)}><option value="">All products</option>{products.data?.items.map((product: any) => <option key={product.id} value={product.id}>{product.nameEn}</option>)}</Select></div>
+        {query.isLoading ? <LoadingBlock /> : query.isError ? <ErrorState retry={() => query.refetch()} /> : query.data?.items.length ? <div className="overflow-x-auto"><table className="w-full min-w-[620px] text-left text-sm"><thead className="bg-muted/55 text-[10px] uppercase tracking-[.12em] text-muted-foreground"><tr><th className="px-5 py-3">Product</th><th className="px-4 py-3">Value / stock unit</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Order</th><th className="px-5 py-3 text-right">Action</th></tr></thead><tbody className="divide-y divide-border">{query.data.items.map((item: any) => <tr key={item.id} data-testid={`row-inventory-${item.id}`}><td className="px-5 py-4 font-bold">{item.productName}</td><td className="px-4 py-4 font-mono text-xs">{item.maskedValue}</td><td className="px-4 py-4"><Badge tone={item.status === 'available' ? 'green' : item.status === 'disabled' ? 'red' : 'neutral'}>{item.status}</Badge></td><td className="px-4 py-4 font-mono text-xs text-muted-foreground">{item.orderNumber || '—'}</td><td className="px-5 py-4 text-right">{item.status === 'available' && <Button variant="quiet" className="text-xs text-destructive" onClick={() => disable.mutate({ inventoryId: item.id }, { onSuccess: refresh })} disabled={disable.isPending} data-testid={`button-disable-inventory-${item.id}`}>Disable</Button>}</td></tr>)}</tbody></table></div> : <EmptyState icon={Boxes} title="No inventory found" body="Add stock above to populate this view." />}
+      </Card>
+    </div>
+  </div>;
 }
 
 function FlashSales() {
