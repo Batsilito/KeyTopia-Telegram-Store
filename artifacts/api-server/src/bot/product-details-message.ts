@@ -44,7 +44,6 @@ export function createProductDetailsMessage({
     stockLine,
     `⚡ <b>${t(language, "automaticDelivery")}</b>`,
     "",
-    "",
     `📝 <b>${t(language, "description")}</b>`,
     escapeHtml(description.trim()) || "—",
     "",
