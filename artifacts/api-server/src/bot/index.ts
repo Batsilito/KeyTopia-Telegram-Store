@@ -39,6 +39,7 @@ import {
 import { t, type BotLanguage } from "./locales";
 import { createProductShopButton, isValidTelegramCustomEmojiId } from "./shop-product-button";
 import { createProductDetailsMessage } from "./product-details-message";
+import { createOrderDeliveryMessage } from "./order-delivery-message";
 import { createWelcomeMessage } from "./welcome-message";
 
 export const telegramBotToken = process.env.TELEGRAM_BOT_TOKEN;
@@ -416,15 +417,13 @@ export async function notifyOrderDelivered(orderId: string) {
   try {
     await telegramBot.api.sendMessage(
       row.telegramUserId,
-      [
-        `<b>${t(row.language, "orderDelivered")}</b>`,
-        "",
-        `📦 <b>${t(row.language, "product")}:</b> ${escapeHtml(row.order.productNameSnapshot)}`,
-        `🧾 <b>${t(row.language, "shopOrder")}:</b> <code>${escapeHtml(row.order.orderNumber)}</code>`,
-        "",
-        `<b>${t(row.language, "deliveryDetails")}:</b>`,
-        `<pre>${escapeHtml(row.order.deliveryInfo)}</pre>`,
-      ].join("\n"),
+      createOrderDeliveryMessage({
+        language: row.language,
+        deliveryType: row.order.deliveryType,
+        productName: row.order.productNameSnapshot,
+        orderNumber: row.order.orderNumber,
+        deliveryInfo: row.order.deliveryInfo,
+      }),
       {
         parse_mode: "HTML",
         reply_markup: customerKeyboard(row.language),

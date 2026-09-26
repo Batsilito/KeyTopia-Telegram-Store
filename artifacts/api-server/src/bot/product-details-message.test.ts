@@ -19,6 +19,7 @@ test("product title, price, stock and description render inside a Telegram quote
   assert.match(message, /<blockquote>\n❤️ <b>Perplexity Pro 30 Days<\/b>/);
   assert.match(message, /<b>Price:<\/b> 7\.50 USDT/);
   assert.match(message, /<b>Stock:<\/b> 48 available/);
+  assert.match(message, /<b>Automatic delivery<\/b>/);
   assert.match(message, /<b>Description<\/b>\nOfficial renewal with fast delivery\./);
   assert.match(message, /<b>Quick Guide<\/b>/);
   assert.match(message, /<\/blockquote>$/);
