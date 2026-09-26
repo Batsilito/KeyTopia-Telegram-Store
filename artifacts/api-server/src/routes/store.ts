@@ -65,6 +65,7 @@ import {
 import {
   broadcastNewProduct,
   broadcastProductRestocked,
+  broadcastProductPriceChange,
   clearPaymentVerificationMessage,
   issueReferralRewardForOrder,
   notifyOrderConfirmed,
@@ -376,21 +377,41 @@ router.patch("/products/:productId", async (req, res) => {
   if (parsed.data.imageUrl !== undefined) updateData.imageUrl = parsed.data.imageUrl;
   if (parsed.data.instructionsEn !== undefined) updateData.instructionsEn = parsed.data.instructionsEn;
   if (parsed.data.instructionsAr !== undefined) updateData.instructionsAr = parsed.data.instructionsAr;
-  const row = await db
-    .update(products)
-    .set(updateData)
-    .where(eq(products.id, req.params.productId))
-    .returning();
-  if (!row[0]) return res.status(404).json({ error: "Product not found" });
-  const stock = await productStock([row[0].id]);
+  const updatedProduct = await db.transaction(async (tx) => {
+    const existing = await tx
+      .select({ priceUsd: products.priceUsd })
+      .from(products)
+      .where(eq(products.id, req.params.productId))
+      .for("update");
+    if (!existing[0]) return null;
+    const rows = await tx
+      .update(products)
+      .set(updateData)
+      .where(eq(products.id, req.params.productId))
+      .returning();
+    if (!rows[0]) return null;
+    return { product: rows[0], previousPriceUsd: existing[0].priceUsd };
+  });
+  if (!updatedProduct) {
+    res.status(404).json({ error: "Product not found" });
+    return;
+  }
+  const { product, previousPriceUsd } = updatedProduct;
+  const stock = await productStock([product.id]);
   await db.insert(auditLogs).values({
     adminId: admin.id,
     action: "product_updated",
     entityType: "product",
-    entityId: row[0].id,
+    entityId: product.id,
     afterValues: parsed.data,
   });
-  res.json(productView(row[0], stock.get(row[0].id) ?? 0));
+  if (
+    parsed.data.priceUsd !== undefined &&
+    Number(previousPriceUsd) !== Number(product.priceUsd)
+  ) {
+    void broadcastProductPriceChange(product, previousPriceUsd);
+  }
+  res.json(productView(product, stock.get(product.id) ?? 0));
 });
 
 router.get("/inventory/summary", async (req, res) => {

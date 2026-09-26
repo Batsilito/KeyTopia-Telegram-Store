@@ -39,6 +39,7 @@ import {
 import { t, type BotLanguage } from "./locales";
 import { createProductShopButton, isValidTelegramCustomEmojiId } from "./shop-product-button";
 import { createProductDetailsMessage } from "./product-details-message";
+import { createProductPriceChangeMessage } from "./product-price-change-message";
 import { createOrderDeliveryMessage } from "./order-delivery-message";
 import { createWelcomeMessage } from "./welcome-message";
 
@@ -551,6 +552,31 @@ export function broadcastNewProduct(product: typeof products.$inferSelect, avail
     },
     (language) => new InlineKeyboard().text(language === "ar" ? "عرض المنتج" : "View product", `product:${product.id}`),
   );
+}
+
+export async function broadcastProductPriceChange(
+  product: typeof products.$inferSelect,
+  oldPriceUsd: string,
+) {
+  if (!telegramBot) return false;
+  const message = createProductPriceChangeMessage({
+    productName: product.nameEn,
+    oldPriceUsd,
+    newPriceUsd: product.priceUsd,
+  });
+  if (!message) return false;
+  const channel = await channelConfigured();
+  if (!channel) return false;
+  try {
+    await telegramBot.api.sendMessage(channel, message, { parse_mode: "HTML" });
+    return true;
+  } catch (error) {
+    logger.warn(
+      { err: error, channel, productId: product.id },
+      "Unable to send product price change to Telegram channel",
+    );
+    return false;
+  }
 }
 
 function formatFlashSaleRemaining(endsAt: Date, language: BotLanguage, now = new Date()) {
