@@ -1,4 +1,5 @@
 import { useMemo, useState, type ButtonHTMLAttributes, type FormEvent, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react';
+import { createPortal } from 'react-dom';
 import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
 import { Link, Route, Switch, useLocation, useRoute } from 'wouter';
 import {
@@ -77,7 +78,7 @@ function Modal({
   footer?: ReactNode;
   className?: string;
 }) {
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-40 overflow-y-auto bg-foreground/30 p-3 backdrop-blur-sm md:p-5">
       <div className="flex min-h-full items-center justify-center">
         <div className={`my-1 flex max-h-[calc(100dvh-1.5rem)] w-full max-w-2xl flex-col rounded-2xl border border-border bg-card p-5 shadow-2xl md:max-h-[calc(100dvh-2.5rem)] ${className}`}>
@@ -92,7 +93,8 @@ function Modal({
           {footer && <div className="mt-4 shrink-0 border-t border-border pt-4">{footer}</div>}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
