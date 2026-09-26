@@ -25,4 +25,4 @@ channel = "stable-25_05"
 [userenv]
 
 [userenv.shared]
-INITIAL_SUPERADMIN_EMAIL = "bassamihab@gmail.com"
+INITIAL_SUPERADMIN_EMAIL = "batsilito"
