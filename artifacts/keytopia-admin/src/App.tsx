@@ -64,11 +64,23 @@ function Field({ label, children, hint }: { label: string; children: ReactNode; 
 function Input(props: InputHTMLAttributes<HTMLInputElement>) { return <input {...props} className={`h-10 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none transition placeholder:text-muted-foreground/65 focus:border-primary focus:ring-2 focus:ring-primary/15 ${props.className || ''}`} />; }
 function Select(props: SelectHTMLAttributes<HTMLSelectElement>) { return <select {...props} className={`h-10 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/15 ${props.className || ''}`} />; }
 function Textarea(props: TextareaHTMLAttributes<HTMLTextAreaElement>) { return <textarea {...props} className={`min-h-24 w-full resize-y rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none transition placeholder:text-muted-foreground/65 focus:border-primary focus:ring-2 focus:ring-primary/15 ${props.className || ''}`} />; }
-function Modal({ title, children, onClose }: { title: string; children: ReactNode; onClose: () => void }) {
+function Modal({
+  title,
+  children,
+  onClose,
+  footer,
+  className = '',
+}: {
+  title: string;
+  children: ReactNode;
+  onClose: () => void;
+  footer?: ReactNode;
+  className?: string;
+}) {
   return (
     <div className="fixed inset-0 z-40 overflow-y-auto bg-foreground/30 p-3 backdrop-blur-sm md:p-5">
       <div className="flex min-h-full items-center justify-center">
-        <div className="my-1 flex max-h-[calc(100dvh-1.5rem)] w-full max-w-2xl flex-col rounded-2xl border border-border bg-card p-5 shadow-2xl md:max-h-[calc(100dvh-2.5rem)]">
+        <div className={`my-1 flex max-h-[calc(100dvh-1.5rem)] w-full max-w-2xl flex-col rounded-2xl border border-border bg-card p-5 shadow-2xl md:max-h-[calc(100dvh-2.5rem)] ${className}`}>
           <div className="mb-5 flex shrink-0 items-center justify-between">
             <div>
               <p className="font-mono text-[10px] font-bold uppercase tracking-[.18em] text-primary">Operator action</p>
@@ -76,7 +88,8 @@ function Modal({ title, children, onClose }: { title: string; children: ReactNod
             </div>
             <Button variant="quiet" className="px-2" onClick={onClose} aria-label="Close dialog"><X size={18} /></Button>
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto pr-1">{children}</div>
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-2">{children}</div>
+          {footer && <div className="mt-4 shrink-0 border-t border-border pt-4">{footer}</div>}
         </div>
       </div>
     </div>
@@ -148,30 +161,47 @@ function Products() {
 function ProductModal({ product, onClose, onSave, pending }: { product: any; onClose: () => void; onSave: (data: any) => void; pending: boolean }) {
   const [form, setForm] = useState<any>(product ? { ...product } : { nameEn: '', nameAr: '', duration: '30 days', warranty: '7 days', priceUsd: 0, deliveryType: 'automatic', stockType: 'limited', active: true, displayStock: true, lowStockThreshold: 5, instructionsEn: '', instructionsAr: '', imageUrl: null, telegramCustomEmojiId: null });
   const set = (key: string, value: any) => setForm((current: any) => ({ ...current, [key]: value }));
-  return <Modal title={product ? 'Edit product' : 'Add product'} onClose={onClose}>
-    <div className="grid gap-4 md:grid-cols-2">
-      <Field label="Name (English)"><Input value={form.nameEn} onChange={(e) => set('nameEn', e.target.value)} data-testid="input-product-name-en" /></Field>
-      <Field label="Name (Arabic)"><Input value={form.nameAr} onChange={(e) => set('nameAr', e.target.value)} data-testid="input-product-name-ar" /></Field>
-      <Field label="Duration"><Input value={form.duration} onChange={(e) => set('duration', e.target.value)} /></Field>
-      <Field label="Warranty"><Input value={form.warranty} onChange={(e) => set('warranty', e.target.value)} /></Field>
-      <Field label="Price (USD)"><Input type="number" min="0" value={form.priceUsd} onChange={(e) => set('priceUsd', Number(e.target.value))} data-testid="input-product-price" /></Field>
-      <Field label="Telegram Custom Emoji ID" hint="Optional numeric ID; leave blank for a normal shop button.">
-        <Input value={form.telegramCustomEmojiId ?? ''} onChange={(e) => set('telegramCustomEmojiId', e.target.value)} placeholder="Custom Emoji ID" data-testid="input-product-custom-emoji-id" />
-      </Field>
-      <Field label="Delivery type"><Select value={form.deliveryType} onChange={(e) => set('deliveryType', e.target.value)}><option value="automatic">Automatic</option><option value="manual">Manual</option></Select></Field>
-      <Field label="Stock type"><Select value={form.stockType} onChange={(e) => set('stockType', e.target.value)}><option value="limited">Limited</option><option value="unlimited">Unlimited</option></Select></Field>
-      <Field label="Low stock threshold"><Input type="number" min="0" value={form.lowStockThreshold} onChange={(e) => set('lowStockThreshold', Number(e.target.value))} /></Field>
-    </div>
-    <div className="mt-4 grid gap-4">
-      <Field label="Instructions (English)"><Textarea value={form.instructionsEn} onChange={(e) => set('instructionsEn', e.target.value)} /></Field>
-      <Field label="Instructions (Arabic)"><Textarea value={form.instructionsAr} onChange={(e) => set('instructionsAr', e.target.value)} /></Field>
-    </div>
-    <div className="sticky bottom-0 mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-border bg-card/95 pt-4 backdrop-blur">
+  return <Modal
+    title={product ? 'Edit product' : 'Add product'}
+    onClose={onClose}
+    className="h-[calc(100dvh-2rem)] md:h-[calc(100dvh-3rem)]"
+    footer={<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between" data-testid="product-form-actions">
       <label className="flex items-center gap-2 text-sm font-bold"><input type="checkbox" checked={form.active} onChange={(e) => set('active', e.target.checked)} /> Product is active</label>
-      <div className="flex gap-2">
+      <div className="flex justify-end gap-2">
         <Button variant="secondary" onClick={onClose}>Cancel</Button>
         <Button disabled={!form.nameEn.trim() || !form.nameAr.trim() || pending} onClick={() => onSave({ ...form, priceUsd: Number(form.priceUsd), lowStockThreshold: Number(form.lowStockThreshold), telegramCustomEmojiId: form.telegramCustomEmojiId?.trim() || null })} data-testid="button-save-product"><Check size={15} /> Save product</Button>
       </div>
+    </div>
+  }>
+    <div className="grid gap-6 pb-1">
+      <section aria-labelledby="product-details-heading">
+        <h3 id="product-details-heading" className="font-mono text-[10px] font-bold uppercase tracking-[.16em] text-muted-foreground">Product details</h3>
+        <div className="mt-3 grid gap-4 md:grid-cols-2">
+          <Field label="Name (English)"><Input value={form.nameEn} onChange={(e) => set('nameEn', e.target.value)} data-testid="input-product-name-en" /></Field>
+          <Field label="Name (Arabic)"><Input value={form.nameAr} onChange={(e) => set('nameAr', e.target.value)} data-testid="input-product-name-ar" /></Field>
+          <Field label="Duration"><Input value={form.duration} onChange={(e) => set('duration', e.target.value)} /></Field>
+          <Field label="Warranty"><Input value={form.warranty} onChange={(e) => set('warranty', e.target.value)} /></Field>
+          <Field label="Price (USD)"><Input type="number" min="0" value={form.priceUsd} onChange={(e) => set('priceUsd', Number(e.target.value))} data-testid="input-product-price" /></Field>
+          <Field label="Telegram Custom Emoji ID" hint="Optional numeric ID; leave blank for a normal shop button.">
+            <Input value={form.telegramCustomEmojiId ?? ''} onChange={(e) => set('telegramCustomEmojiId', e.target.value)} placeholder="Custom Emoji ID" data-testid="input-product-custom-emoji-id" />
+          </Field>
+        </div>
+      </section>
+      <section aria-labelledby="product-delivery-heading">
+        <h3 id="product-delivery-heading" className="font-mono text-[10px] font-bold uppercase tracking-[.16em] text-muted-foreground">Delivery and inventory</h3>
+        <div className="mt-3 grid gap-4 md:grid-cols-2">
+          <Field label="Delivery type"><Select value={form.deliveryType} onChange={(e) => set('deliveryType', e.target.value)}><option value="automatic">Automatic</option><option value="manual">Manual</option></Select></Field>
+          <Field label="Stock type"><Select value={form.stockType} onChange={(e) => set('stockType', e.target.value)}><option value="limited">Limited</option><option value="unlimited">Unlimited</option></Select></Field>
+          <Field label="Low stock threshold"><Input type="number" min="0" value={form.lowStockThreshold} onChange={(e) => set('lowStockThreshold', Number(e.target.value))} /></Field>
+        </div>
+      </section>
+      <section aria-labelledby="product-instructions-heading">
+        <h3 id="product-instructions-heading" className="font-mono text-[10px] font-bold uppercase tracking-[.16em] text-muted-foreground">Customer instructions</h3>
+        <div className="mt-3 grid gap-4">
+          <Field label="Instructions (English)"><Textarea className="h-28 max-h-48" value={form.instructionsEn} onChange={(e) => set('instructionsEn', e.target.value)} /></Field>
+          <Field label="Instructions (Arabic)"><Textarea className="h-28 max-h-48" value={form.instructionsAr} onChange={(e) => set('instructionsAr', e.target.value)} /></Field>
+        </div>
+      </section>
     </div>
   </Modal>;
 }
