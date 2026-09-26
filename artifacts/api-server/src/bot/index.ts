@@ -38,6 +38,7 @@ import {
 } from "../lib/reward-policy";
 import { t, type BotLanguage } from "./locales";
 import { createChannelBuyNowKeyboard } from "./channel-buy-keyboard";
+import { createProductActionKeyboard } from "./product-action-keyboard";
 import { createProductShopButton, isValidTelegramCustomEmojiId } from "./shop-product-button";
 import { createProductDetailsMessage } from "./product-details-message";
 import { createProductPriceChangeMessage } from "./product-price-change-message";
@@ -569,7 +570,7 @@ export function broadcastProductRestocked(
           `💰 <b>${language === "ar" ? "السعر" : "Price"}:</b> ${product.priceUsd} USDT`,
         ].join("\n");
       },
-      (language) => new InlineKeyboard().text(
+      (language) => createProductActionKeyboard(
         language === "ar" ? "اشترِ الآن" : "Buy now",
         `product:${product.id}`,
       ),
@@ -622,7 +623,10 @@ export function broadcastNewProduct(product: typeof products.$inferSelect, avail
         `💰 <b>${language === "ar" ? "السعر" : "Price"}:</b> ${product.priceUsd} USDT`,
       ].join("\n");
     },
-    (language) => new InlineKeyboard().text(language === "ar" ? "عرض المنتج" : "View product", `product:${product.id}`),
+    (language) => createProductActionKeyboard(
+      language === "ar" ? "عرض المنتج" : "View product",
+      `product:${product.id}`,
+    ),
   );
 }
 
@@ -723,7 +727,7 @@ export async function broadcastFlashSale(
 ) {
   await broadcastToCustomers(
     (language) => flashSaleMessage(sale, product, language, false),
-    (language) => new InlineKeyboard().text(
+    (language) => createProductActionKeyboard(
       language === "ar" ? "اشترِ الآن" : "Buy now",
       "nav:shop",
     ),
@@ -737,7 +741,7 @@ export async function broadcastFlashSaleReminder(
 ) {
   await broadcastToCustomers(
     (language) => flashSaleMessage(sale, product, language, true),
-    (language) => new InlineKeyboard().text(
+    (language) => createProductActionKeyboard(
       language === "ar" ? "اشترِ الآن" : "Buy now",
       "nav:shop",
     ),
@@ -2180,7 +2184,10 @@ async function showProduct(
   const price = effectiveProductPrice(product, sale);
   const keyboard = new InlineKeyboard();
   if (availability.inStock) {
-    keyboard.text(`${t(language, "buyNow")} · ${price} USDT`, `buy:${product.id}`).row();
+    keyboard
+      .text(`${t(language, "buyNow")} · ${price} USDT`, `buy:${product.id}`)
+      .success()
+      .row();
   }
   keyboard
     .text(t(language, "refreshStock"), `product:refresh:${product.id}`)
