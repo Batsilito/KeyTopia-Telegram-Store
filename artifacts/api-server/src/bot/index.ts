@@ -222,7 +222,6 @@ function mainMenuKeyboard(language: BotLanguage) {
     .text(t(language, "support"))
     .row()
     .text(t(language, "refer"))
-    .row()
     .resized();
 }
 
@@ -2575,7 +2574,12 @@ export function buildTelegramBot() {
     const user = foundUser ? await applyReferralCode(foundUser, ctx.match) : null;
     if (!user) return;
     if (user.language === "en" && user.createdAt.getTime() === user.updatedAt.getTime()) {
-      await ctx.reply(t("en", "chooseLanguage"), { reply_markup: languageKeyboard() });
+      if (await ensureAccess(ctx, user)) {
+        await showHome(ctx, user);
+        await ctx.reply(t("en", "chooseLanguage"), {
+          reply_markup: languageKeyboard(),
+        });
+      }
       return;
     }
     if (await ensureAccess(ctx, user)) await showHome(ctx, user);

@@ -16,7 +16,7 @@ test("welcome message includes the customer's name, shop guide, channel and supp
   assert.match(message, /Shop<\/b> — Browse and buy digital products/);
   assert.match(message, /Deposit<\/b> — Add funds to your wallet/);
   assert.match(message, /https:\/\/t\.me\/KeytopiaChannel/);
-  assert.match(message, /tap <b>Support<\/b>/);
+  assert.match(message, /Tap <b>Support<\/b>/);
 });
 
 test("welcome message escapes user and store names before inserting them as HTML", () => {
