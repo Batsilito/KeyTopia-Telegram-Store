@@ -40,6 +40,11 @@ import { t, type BotLanguage } from "./locales";
 import { createProductShopButton, isValidTelegramCustomEmojiId } from "./shop-product-button";
 import { createProductDetailsMessage } from "./product-details-message";
 import { createProductPriceChangeMessage } from "./product-price-change-message";
+import {
+  createTelegramReferralLink,
+  createTelegramShopLink,
+  parseTelegramStartPayload,
+} from "./telegram-links";
 import { createOrderDeliveryMessage } from "./order-delivery-message";
 import { createWelcomeMessage } from "./welcome-message";
 
@@ -232,6 +237,10 @@ function languageKeyboard() {
   return new InlineKeyboard()
     .text("🇬🇧 English", "language:en")
     .text("🇸🇦 العربية", "language:ar");
+}
+
+function buyNowKeyboard() {
+  return new InlineKeyboard().url("Buy now", createTelegramShopLink());
 }
 
 function paymentMethodLabel(method: string, language?: BotLanguage) {
@@ -519,20 +528,55 @@ export function broadcastProductRestocked(
   restockedCount: number,
   availableStock: number,
 ) {
-  return broadcastToCustomers(
-    (language) => {
-      const name = language === "ar" ? product.nameAr : product.nameEn;
-      return [
-        `<b>${language === "ar" ? "🔔 تمت إعادة توفير المنتج" : "🔔 PRODUCT RESTOCKED"}</b>`,
-        "",
-        `📦 <b>${language === "ar" ? "المنتج" : "Product"}:</b> ${escapeHtml(name)}`,
-        `➕ <b>${language === "ar" ? "تمت إضافة" : "Restocked"}:</b> ${restockedCount}`,
-        `📊 <b>${language === "ar" ? "المتاح الآن" : "Available now"}:</b> ${availableStock}`,
-        `💰 <b>${language === "ar" ? "السعر" : "Price"}:</b> ${product.priceUsd} USDT`,
-      ].join("\n");
-    },
-    (language) => new InlineKeyboard().text(language === "ar" ? "عرض المنتج" : "View product", `product:${product.id}`),
-  );
+  return Promise.all([
+    broadcastToCustomers(
+      (language) => {
+        const name = language === "ar" ? product.nameAr : product.nameEn;
+        return [
+          `<b>${language === "ar" ? "🔔 تمت إعادة توفير المنتج" : "🔔 PRODUCT RESTOCKED"}</b>`,
+          "",
+          `📦 <b>${language === "ar" ? "المنتج" : "Product"}:</b> ${escapeHtml(name)}`,
+          `➕ <b>${language === "ar" ? "تمت إضافة" : "Restocked"}:</b> ${restockedCount}`,
+          `📊 <b>${language === "ar" ? "المتاح الآن" : "Available now"}:</b> ${availableStock}`,
+          `💰 <b>${language === "ar" ? "السعر" : "Price"}:</b> ${product.priceUsd} USDT`,
+        ].join("\n");
+      },
+      (language) => new InlineKeyboard().text(
+        language === "ar" ? "اشترِ الآن" : "Buy now",
+        `product:${product.id}`,
+      ),
+    ),
+    broadcastProductRestockedToChannel(product, restockedCount, availableStock),
+  ]);
+}
+
+async function broadcastProductRestockedToChannel(
+  product: typeof products.$inferSelect,
+  restockedCount: number,
+  availableStock: number,
+) {
+  if (!telegramBot) return;
+  const channel = await channelConfigured();
+  if (!channel) return;
+  const message = [
+    "<b>🔔 PRODUCT RESTOCKED</b>",
+    "",
+    `📦 <b>Product:</b> ${escapeHtml(product.nameEn)}`,
+    `➕ <b>Restocked:</b> ${restockedCount}`,
+    `📊 <b>Available now:</b> ${availableStock}`,
+    `💰 <b>Price:</b> ${escapeHtml(product.priceUsd)} USDT`,
+  ].join("\n");
+  try {
+    await telegramBot.api.sendMessage(channel, message, {
+      parse_mode: "HTML",
+      reply_markup: buyNowKeyboard(),
+    });
+  } catch (error) {
+    logger.warn(
+      { err: error, channel, productId: product.id },
+      "Unable to send product restock to Telegram channel",
+    );
+  }
 }
 
 export function broadcastNewProduct(product: typeof products.$inferSelect, availableStock = 0) {
@@ -568,7 +612,10 @@ export async function broadcastProductPriceChange(
   const channel = await channelConfigured();
   if (!channel) return false;
   try {
-    await telegramBot.api.sendMessage(channel, message, { parse_mode: "HTML" });
+    await telegramBot.api.sendMessage(channel, message, {
+      parse_mode: "HTML",
+      reply_markup: buyNowKeyboard(),
+    });
     return true;
   } catch (error) {
     logger.warn(
@@ -634,7 +681,7 @@ async function broadcastFlashSaleToChannel(
       flashSaleMessage(sale, product, "en", reminder),
       {
         parse_mode: "HTML",
-        reply_markup: new InlineKeyboard().text("Open shop", "nav:shop"),
+        reply_markup: buyNowKeyboard(),
       },
     );
   } catch (error) {
@@ -648,7 +695,10 @@ export async function broadcastFlashSale(
 ) {
   await broadcastToCustomers(
     (language) => flashSaleMessage(sale, product, language, false),
-    (language) => new InlineKeyboard().text(language === "ar" ? "افتح المتجر" : "Open shop", "nav:shop"),
+    (language) => new InlineKeyboard().text(
+      language === "ar" ? "اشترِ الآن" : "Buy now",
+      "nav:shop",
+    ),
   );
   await broadcastFlashSaleToChannel(sale, product, false);
 }
@@ -659,7 +709,10 @@ export async function broadcastFlashSaleReminder(
 ) {
   await broadcastToCustomers(
     (language) => flashSaleMessage(sale, product, language, true),
-    (language) => new InlineKeyboard().text(language === "ar" ? "افتح المتجر" : "Open shop", "nav:shop"),
+    (language) => new InlineKeyboard().text(
+      language === "ar" ? "اشترِ الآن" : "Buy now",
+      "nav:shop",
+    ),
   );
   await broadcastFlashSaleToChannel(sale, product, true);
 }
@@ -1723,7 +1776,7 @@ async function showReferral(ctx: Context, user: typeof users.$inferSelect) {
     db.select({ total: count() }).from(referrals).where(eq(referrals.referrerId, user.id)),
   ]);
   const reward = Number(VERIFIED_REFERRAL_REWARD_USD).toFixed(2);
-  const inviteLink = `https://t.me/KeyTopiaStore_bot?start=${encodeURIComponent(user.referralCode)}`;
+  const inviteLink = createTelegramReferralLink(user.referralCode);
   const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(inviteLink)}&text=${encodeURIComponent(t(language, "referralIntro"))}`;
   const text = [
     `<b>${t(language, "referralTitle")}</b>`,
@@ -1923,8 +1976,13 @@ async function replaceCallbackMessage(
   return false;
 }
 
-async function showShop(ctx: Context, user: typeof users.$inferSelect, editMessage = false) {
-  if (!(await ensureAccess(ctx, user))) return;
+async function showShop(
+  ctx: Context,
+  user: typeof users.$inferSelect,
+  editMessage = false,
+  accessAlreadyChecked = false,
+) {
+  if (!accessAlreadyChecked && !(await ensureAccess(ctx, user))) return;
   const language = languageOf(user);
   const rows = await db
     .select()
@@ -2591,16 +2649,27 @@ export function buildTelegramBot() {
     await next();
   });
   bot.command("start", async (ctx) => {
+    const startPayload = parseTelegramStartPayload(ctx.match);
     const foundUser = await findOrCreateCustomer(ctx);
-    const user = foundUser ? await applyReferralCode(foundUser, ctx.match) : null;
+    const user = foundUser
+      ? await applyReferralCode(foundUser, startPayload.referralCode)
+      : null;
     if (!user) return;
-    if (user.language === "en" && user.createdAt.getTime() === user.updatedAt.getTime()) {
+    const firstStart =
+      user.language === "en" &&
+      user.createdAt.getTime() === user.updatedAt.getTime();
+    if (firstStart) {
       if (await ensureAccess(ctx, user)) {
-        await showHome(ctx, user);
+        if (startPayload.openShop) await showShop(ctx, user, false, true);
+        else await showHome(ctx, user);
         await ctx.reply(t("en", "chooseLanguage"), {
           reply_markup: languageKeyboard(),
         });
       }
+      return;
+    }
+    if (startPayload.openShop) {
+      await showShop(ctx, user);
       return;
     }
     if (await ensureAccess(ctx, user)) await showHome(ctx, user);
