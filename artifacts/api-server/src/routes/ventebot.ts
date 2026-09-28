@@ -65,6 +65,45 @@ function hasVenteBotKey() {
   return Boolean(process.env.VENTEBOT_RESELLER_KEY?.trim());
 }
 
+function getCatalogRefreshErrorContext(error: unknown): Record<string, unknown> {
+  const context: Record<string, unknown> = {
+    errorType: error instanceof Error ? error.name : typeof error,
+  };
+
+  if (error && typeof error === "object") {
+    if ("statusCode" in error) {
+      const statusCode = Number(error.statusCode);
+      if (Number.isFinite(statusCode)) context.supplierStatusCode = statusCode;
+    }
+    if (
+      "code" in error &&
+      typeof error.code === "string" &&
+      /^[A-Z0-9_]{2,16}$/.test(error.code)
+    ) {
+      context.errorCode = error.code;
+    }
+  }
+
+  if (error instanceof SyntaxError) {
+    context.failureKind = "invalid_json";
+  } else if (
+    error instanceof Error &&
+    (
+      error.message === "Invalid VenteBot catalog response" ||
+      error.message.startsWith("Invalid VenteBot response:")
+    )
+  ) {
+    context.failureKind = "invalid_supplier_payload";
+    context.validationError = error.message;
+  } else if (context.supplierStatusCode !== undefined) {
+    context.failureKind = "supplier_http_error";
+  } else {
+    context.failureKind = "network_or_internal_error";
+  }
+
+  return context;
+}
+
 async function updateConnectionState(input: {
   status: "not_configured" | "untested" | "connected" | "error";
   checkedAt?: Date;
@@ -366,11 +405,7 @@ router.post("/ventebot/catalog/refresh", async (req, res): Promise<void> => {
       error: message,
     });
     req.log.warn(
-      {
-        supplierStatusCode: error && typeof error === "object" && "statusCode" in error
-          ? Number(error.statusCode)
-          : undefined,
-      },
+      getCatalogRefreshErrorContext(error),
       "VenteBot catalog refresh failed",
     );
     res.status(503).json({ error: message });
