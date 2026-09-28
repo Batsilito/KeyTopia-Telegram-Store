@@ -39,7 +39,11 @@ import {
   isValidVenteBotResalePricingInput,
 } from "../lib/ventebot-rules";
 import { refreshVenteBotCatalog } from "../lib/ventebot-catalog-sync";
-import { broadcastNewProduct, retryAndNotifyVenteBotOrder } from "../bot";
+import {
+  broadcastNewProduct,
+  broadcastProductPriceChange,
+  retryAndNotifyVenteBotOrder,
+} from "../bot";
 
 const router: IRouter = Router();
 
@@ -402,6 +406,9 @@ router.patch(
       if (!updated) {
         res.status(404).json({ error: "KeyTopia product was not found." });
         return;
+      }
+      if (updated.active && updated.priceUsd !== product.priceUsd) {
+        void broadcastProductPriceChange(updated, product.priceUsd);
       }
       res.json(UpdateVenteBotMappingResponse.parse({
         supplierProductId,
