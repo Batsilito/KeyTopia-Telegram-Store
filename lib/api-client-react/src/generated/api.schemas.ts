@@ -881,6 +881,18 @@ export interface VenteBotMappingInput {
      * @nullable
      */
   resalePriceUsd: number | null;
+  copyDescription?: boolean;
+}
+
+export interface VenteBotStorefrontProductInput {
+  /**
+     * @minimum 0
+     * @maximum 9999999999.99
+     */
+  resalePriceUsd: number;
+  copyDescription: boolean;
+  /** @nullable */
+  replaceMappedProductId: string | null;
 }
 
 export interface VenteBotMappingResult {

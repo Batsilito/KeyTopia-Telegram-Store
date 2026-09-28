@@ -1,6 +1,9 @@
 import { Router, type IRouter, type Request, type Response } from "express";
 import { asc, count, desc, eq, sql } from "drizzle-orm";
 import {
+  CreateProductBody,
+  CreateVenteBotStorefrontProductBody,
+  CreateVenteBotStorefrontProductParams,
   GetVenteBotCatalogResponse,
   ListVenteBotOrdersResponse,
   RefreshVenteBotCatalogResponse,
@@ -12,6 +15,7 @@ import {
   UpdateVenteBotMappingResponse,
 } from "@workspace/api-zod";
 import {
+  auditLogs,
   db,
   orders,
   products,
@@ -32,7 +36,7 @@ import {
   getVenteBotAvailability,
   isValidVenteBotMappingInput,
 } from "../lib/ventebot-rules";
-import { retryAndNotifyVenteBotOrder } from "../bot";
+import { broadcastNewProduct, retryAndNotifyVenteBotOrder } from "../bot";
 
 const router: IRouter = Router();
 
@@ -427,7 +431,11 @@ router.patch(
       return;
     }
     const { supplierProductId } = params.data;
-    const { productId, resalePriceUsd } = body.data;
+    const {
+      productId,
+      resalePriceUsd,
+      copyDescription = false,
+    } = body.data;
     if (!isValidVenteBotMappingInput(productId, resalePriceUsd)) {
       res.status(400).json({
         error: "Choose a KeyTopia product and resale price together, or clear both to unlink.",
@@ -492,6 +500,9 @@ router.patch(
             priceUsd: resalePriceUsd!.toFixed(2),
             deliveryType: "automatic",
             stockType: "unlimited",
+            ...(copyDescription
+              ? { instructionsEn: supplierProduct.description }
+              : {}),
             updatedAt: new Date(),
           })
           .where(eq(products.id, productId))
@@ -515,6 +526,143 @@ router.patch(
       if (error && typeof error === "object" && "code" in error && error.code === "23505") {
         res.status(409).json({
           error: "This supplier product is already mapped to another KeyTopia product.",
+        });
+        return;
+      }
+      throw error;
+    }
+  },
+);
+
+router.post(
+  "/ventebot/catalog/:supplierProductId/store-product",
+  async (req, res): Promise<void> => {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+    if (!requireSuperAdmin(admin, res)) return;
+    const params = CreateVenteBotStorefrontProductParams.safeParse({
+      supplierProductId: Number(req.params.supplierProductId),
+    });
+    const body = CreateVenteBotStorefrontProductBody.safeParse(req.body);
+    if (!params.success || !body.success) {
+      res.status(400).json({ error: "Invalid supplier product setup." });
+      return;
+    }
+    const { supplierProductId } = params.data;
+    const supplierRows = await db.select()
+      .from(ventebotCatalogProducts)
+      .where(eq(ventebotCatalogProducts.id, supplierProductId))
+      .limit(1);
+    const supplierProduct = supplierRows[0];
+    if (!supplierProduct) {
+      res.status(404).json({ error: "Supplier product was not found." });
+      return;
+    }
+    const supplierName = supplierProduct.name.trim();
+    if (!supplierName) {
+      res.status(400).json({
+        error: "The supplier listing needs a name before it can be added to the store.",
+      });
+      return;
+    }
+
+    const availability = getVenteBotAvailability(
+      supplierProduct,
+      hasVenteBotKey(),
+    );
+    const candidate = CreateProductBody.safeParse({
+      nameEn: supplierName,
+      nameAr: supplierName,
+      duration: "Supplier fulfilled",
+      warranty: supplierProduct.warrantyDays > 0
+        ? `${supplierProduct.warrantyDays} days`
+        : "No warranty",
+      priceUsd: body.data.resalePriceUsd,
+      deliveryType: "automatic",
+      stockType: "unlimited",
+      active: availability.available,
+      displayStock: false,
+      lowStockThreshold: 3,
+      imageUrl: supplierProduct.imageUrl,
+      telegramCustomEmojiId: null,
+      instructionsEn: body.data.copyDescription
+        ? supplierProduct.description
+        : "",
+      instructionsAr: "",
+    });
+    if (!candidate.success) {
+      res.status(400).json({
+        error: "The supplier listing is missing details required for a store product.",
+      });
+      return;
+    }
+
+    try {
+      const createdProduct = await db.transaction(async (tx) => {
+        const currentMappingRows = await tx.select({ id: products.id })
+          .from(products)
+          .where(eq(products.ventebotProductId, supplierProductId))
+          .limit(1)
+          .for("update");
+        const currentMappedProductId = currentMappingRows[0]?.id ?? null;
+        if (currentMappedProductId !== body.data.replaceMappedProductId) {
+          return null;
+        }
+        if (currentMappedProductId) {
+          await tx.update(products)
+            .set({
+              ventebotProductId: null,
+              active: false,
+              updatedAt: new Date(),
+            })
+            .where(eq(products.id, currentMappedProductId));
+        }
+        const rows = await tx.insert(products)
+          .values({
+            ...candidate.data,
+            priceUsd: candidate.data.priceUsd.toFixed(2),
+            ventebotProductId: supplierProductId,
+          })
+          .returning();
+        const created = rows[0];
+        await tx.insert(auditLogs).values({
+          adminId: admin.id,
+          action: "product_created_from_ventebot",
+          entityType: "product",
+          entityId: created.id,
+          afterValues: {
+            ...candidate.data,
+            priceUsd: created.priceUsd,
+            ventebotProductId: supplierProductId,
+          },
+        });
+        return created;
+      });
+      if (!createdProduct) {
+        res.status(409).json({
+          error: "The supplier mapping changed. Refresh the catalog and try again.",
+        });
+        return;
+      }
+      if (createdProduct.active) void broadcastNewProduct(createdProduct);
+      res.status(201).json(UpdateVenteBotMappingResponse.parse({
+        supplierProductId,
+        productId: createdProduct.id,
+        resalePriceUsd: Number(createdProduct.priceUsd),
+        expectedMarginUsd: expectedVenteBotMargin(
+          createdProduct.priceUsd,
+          supplierProduct.priceUsd,
+        ),
+      }));
+    } catch (error) {
+      if (
+        error &&
+        typeof error === "object" &&
+        "code" in error &&
+        error.code === "23505"
+      ) {
+        res.status(409).json({
+          error: "This supplier product was mapped by another request.",
         });
         return;
       }

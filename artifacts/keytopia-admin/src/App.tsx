@@ -25,6 +25,7 @@ import {
   getListOrdersQueryKey, getListPaymentsQueryKey, getListProductsQueryKey,
   getListPromoCodesQueryKey, getListSupportTicketsQueryKey,
   useGetVenteBotCatalog, useTestVenteBotConnection, useRefreshVenteBotCatalog,
+  useCreateVenteBotStorefrontProduct,
   useUpdateVenteBotMapping, useListVenteBotOrders, useRetryVenteBotOrder,
   getGetVenteBotCatalogQueryKey, getListVenteBotOrdersQueryKey,
 } from '@workspace/api-client-react';
@@ -698,26 +699,38 @@ function VenteBot() {
   const orders = useListVenteBotOrders({ query: { queryKey: getListVenteBotOrdersQueryKey(), staleTime: 15_000 } });
   const testConnection = useTestVenteBotConnection();
   const refreshCatalog = useRefreshVenteBotCatalog();
+  const createStoreProduct = useCreateVenteBotStorefrontProduct();
   const updateMapping = useUpdateVenteBotMapping();
   const retryOrder = useRetryVenteBotOrder();
   const queryClient = useQueryClient();
   const [mappingProduct, setMappingProduct] = useState<any | null>(null);
   const [localProductId, setLocalProductId] = useState('');
   const [resalePriceText, setResalePriceText] = useState('');
+  const [setupMode, setSetupMode] = useState<'existing' | 'new'>('existing');
+  const [copyDescription, setCopyDescription] = useState(false);
+  const [availabilityFilter, setAvailabilityFilter] = useState<'all' | 'available' | 'unavailable'>('all');
 
   const invalidateVenteBot = () => {
     void queryClient.invalidateQueries({ queryKey: getGetVenteBotCatalogQueryKey() });
     void queryClient.invalidateQueries({ queryKey: getListVenteBotOrdersQueryKey() });
   };
   const openMapping = (product: any) => {
+    createStoreProduct.reset();
+    updateMapping.reset();
     setMappingProduct(product);
     setLocalProductId(product.mappedProductId || '');
     setResalePriceText(product.resalePriceUsd == null ? '' : String(product.resalePriceUsd));
+    setSetupMode('existing');
+    setCopyDescription(false);
   };
   const closeMapping = () => {
+    createStoreProduct.reset();
+    updateMapping.reset();
     setMappingProduct(null);
     setLocalProductId('');
     setResalePriceText('');
+    setSetupMode('existing');
+    setCopyDescription(false);
   };
   const isValidResalePrice = (value: string) => {
     const parsed = Number(value);
@@ -727,22 +740,52 @@ function VenteBot() {
       && Math.abs(parsed * 100 - Math.round(parsed * 100)) < 1e-8;
   };
   const saveMapping = () => {
-    if (!mappingProduct || !localProductId || !isValidResalePrice(resalePriceText)) return;
+    if (!mappingProduct || !isValidResalePrice(resalePriceText)) return;
     const resalePriceUsd = Number(resalePriceText);
+    if (setupMode === 'new') {
+      createStoreProduct.mutate(
+        {
+          supplierProductId: mappingProduct.id,
+          data: {
+            resalePriceUsd,
+            copyDescription,
+            replaceMappedProductId: mappingProduct.mappedProductId,
+          },
+        },
+        {
+          onSuccess: () => {
+            invalidateVenteBot();
+            void queryClient.invalidateQueries({ queryKey: getListProductsQueryKey() });
+            closeMapping();
+          },
+        },
+      );
+      return;
+    }
+    if (!localProductId) return;
     updateMapping.mutate(
-      { supplierProductId: mappingProduct.id, data: { productId: localProductId, resalePriceUsd } },
-      { onSuccess: () => { invalidateVenteBot(); closeMapping(); } },
+      {
+        supplierProductId: mappingProduct.id,
+        data: { productId: localProductId, resalePriceUsd, copyDescription },
+      },
+      { onSuccess: () => { invalidateVenteBot(); void queryClient.invalidateQueries({ queryKey: getListProductsQueryKey() }); closeMapping(); } },
     );
   };
   const unlinkMapping = () => {
     if (!mappingProduct) return;
     updateMapping.mutate(
-      { supplierProductId: mappingProduct.id, data: { productId: null, resalePriceUsd: null } },
-      { onSuccess: () => { invalidateVenteBot(); closeMapping(); } },
+      { supplierProductId: mappingProduct.id, data: { productId: null, resalePriceUsd: null, copyDescription: false } },
+      { onSuccess: () => { invalidateVenteBot(); void queryClient.invalidateQueries({ queryKey: getListProductsQueryKey() }); closeMapping(); } },
     );
   };
   const connection = catalog.data?.connection;
   const supplierProducts = catalog.data?.supplierProducts ?? [];
+  const visibleSupplierProducts = useMemo(
+    () => supplierProducts.filter((product: any) =>
+      availabilityFilter === 'all'
+      || product.availability.available === (availabilityFilter === 'available')),
+    [supplierProducts, availabilityFilter],
+  );
   const localProducts = catalog.data?.localProducts ?? [];
   const venteOrders = orders.data?.items ?? [];
   const failedOrders = useMemo(() => venteOrders.filter((order: any) => order.status === 'failed'), [venteOrders]);
@@ -752,6 +795,10 @@ function VenteBot() {
   const testError = testConnection.error instanceof Error ? testConnection.error.message : 'The connection test could not be completed.';
   const refreshError = refreshCatalog.error instanceof Error ? refreshCatalog.error.message : 'The supplier catalog could not be refreshed.';
   const retryError = retryOrder.error instanceof Error ? retryOrder.error.message : 'The supplier order could not be retried.';
+  const mappingSaveError = updateMapping.error ?? createStoreProduct.error;
+  const mappingSaveErrorMessage = mappingSaveError instanceof Error
+    ? mappingSaveError.message
+    : 'The supplier product setup could not be saved.';
   const reasonLabel = (reason: string | null | undefined) => {
     if (!reason) return 'Availability confirmed';
     if (reason === 'activation_required' || reason === 'activation_identifier_required') return 'Activation identifier required';
@@ -823,10 +870,26 @@ function VenteBot() {
     <Card className="mt-5 overflow-hidden">
       <div className="flex flex-col gap-2 border-b border-border p-5 md:flex-row md:items-end md:justify-between">
         <div><p className="font-mono text-[10px] font-bold uppercase tracking-[.18em] text-primary">Availability & mapping</p><h3 className="mt-1 text-xl font-extrabold">Supplier catalog</h3><p className="mt-1 text-sm text-muted-foreground">Only mapped products with a verified availability state should move into storefront fulfillment.</p></div>
-        <p className="font-mono text-xs text-muted-foreground" data-testid="text-ventebot-catalog-count">{supplierProducts.length} supplier products</p>
+        <div className="flex flex-wrap items-end gap-3">
+          <Field label="Availability">
+            <Select
+              className="min-w-44"
+              value={availabilityFilter}
+              onChange={(event) => setAvailabilityFilter(event.target.value as 'all' | 'available' | 'unavailable')}
+              data-testid="select-ventebot-availability-filter"
+            >
+              <option value="all">All products</option>
+              <option value="available">Available</option>
+              <option value="unavailable">Unavailable</option>
+            </Select>
+          </Field>
+          <p className="pb-2 font-mono text-xs text-muted-foreground" data-testid="text-ventebot-catalog-count">
+            {visibleSupplierProducts.length} of {supplierProducts.length} supplier products
+          </p>
+        </div>
       </div>
-      {supplierProducts.length ? <div className="divide-y divide-border">
-        {supplierProducts.map((product: any) => <div key={product.id} className="grid gap-4 p-5 xl:grid-cols-[1.45fr_.7fr_.8fr_auto] xl:items-center" data-testid={`row-ventebot-supplier-${product.id}`}>
+      {supplierProducts.length ? visibleSupplierProducts.length ? <div className="divide-y divide-border">
+        {visibleSupplierProducts.map((product: any) => <div key={product.id} className="grid gap-4 p-5 xl:grid-cols-[1.45fr_.7fr_.8fr_auto] xl:items-center" data-testid={`row-ventebot-supplier-${product.id}`}>
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2"><h4 className="font-extrabold" data-testid={`text-ventebot-product-name-${product.id}`}>{product.name}</h4><Badge tone={product.catalogActive ? 'green' : 'neutral'}>{product.catalogActive ? 'Catalog active' : 'Inactive'}</Badge>{product.apiTest && <Badge tone="blue">API test</Badge>}</div>
             <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{product.description || 'No supplier description.'}</p>
@@ -840,11 +903,11 @@ function VenteBot() {
           </div>
           <div className="flex flex-wrap items-center gap-2 xl:justify-end">
             <div className="mr-1 text-right"><p className="text-[10px] font-bold uppercase tracking-[.08em] text-muted-foreground">Expected margin / unit</p><p className={`font-mono text-sm font-bold ${product.expectedMarginUsd != null && product.expectedMarginUsd < 0 ? 'text-destructive' : 'text-primary'}`} data-testid={`text-ventebot-margin-${product.id}`}>{product.expectedMarginUsd == null ? '—' : money(product.expectedMarginUsd)}</p></div>
-            <Button variant="secondary" className="text-xs" onClick={() => openMapping(product)} data-testid={`button-map-ventebot-product-${product.id}`}><Link2 size={14} /> {product.mappedProductId ? 'Edit mapping' : 'Map product'}</Button>
+            <Button variant="secondary" className="text-xs" onClick={() => openMapping(product)} data-testid={`button-map-ventebot-product-${product.id}`}><Link2 size={14} /> {product.mappedProductId ? 'Edit setup' : 'Set up product'}</Button>
           </div>
           {product.mappedProductId && <div className="rounded-xl border border-border bg-background p-3 text-xs xl:col-span-4"><div className="flex flex-wrap items-center justify-between gap-2"><span className="flex items-center gap-2 font-bold"><Link2 size={13} className="text-primary" /> KeyTopia product: <span data-testid={`text-ventebot-mapped-product-${product.id}`}>{product.mappedProductName || product.mappedProductId}</span></span><span className="font-mono text-muted-foreground">Resale {product.resalePriceUsd == null ? '—' : money(product.resalePriceUsd)}</span></div></div>}
         </div>)}
-      </div> : <EmptyState icon={Package} title="Supplier catalog is empty" body="Refresh the catalog after the VenteBot connection is configured." />}
+      </div> : <EmptyState icon={Filter} title="No products match this filter" body="Choose another availability option to see more supplier listings." /> : <EmptyState icon={Package} title="Supplier catalog is empty" body="Refresh the catalog after the VenteBot connection is configured." />}
     </Card>
 
     <Card className="mt-5 overflow-hidden">
@@ -870,28 +933,47 @@ function VenteBot() {
       {retryOrder.isSuccess && <div className="border-t border-primary/20 bg-primary/8 px-5 py-3 text-sm font-bold text-primary" role="status" data-testid="status-ventebot-retry-success">Supplier fulfillment retry submitted.</div>}
     </Card>
 
-    {mappingProduct && <Modal title={`Map ${mappingProduct.name}`} onClose={closeMapping}>
-      <p className="text-sm leading-6 text-muted-foreground">Choose the existing KeyTopia product customers will receive, then set the resale price used for margin tracking.</p>
-      {mappingProduct.mappedProductId && <p className="mt-3 rounded-lg bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-800 dark:text-amber-200">Changing or unlinking this mapping pauses its current KeyTopia product to prevent selling without a supplier source.</p>}
+    {mappingProduct && <Modal title={`Set up ${mappingProduct.name}`} onClose={closeMapping}>
+      <p className="text-sm leading-6 text-muted-foreground">Choose whether to create a new KeyTopia product from this seller listing or connect it to an existing product.</p>
+      {mappingProduct.mappedProductId && <p className="mt-3 rounded-lg bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-800 dark:text-amber-200">Changing this mapping or creating a replacement pauses the current KeyTopia product so it cannot sell without its supplier source.</p>}
+      <fieldset className="mt-5">
+        <legend className="text-xs font-bold uppercase tracking-[.1em] text-muted-foreground">Store setup</legend>
+        <div className="mt-2 grid gap-3 sm:grid-cols-2">
+          <label className={`flex cursor-pointer items-start gap-3 rounded-xl border p-4 ${setupMode === 'existing' ? 'border-primary bg-primary/5' : 'border-border'}`}>
+            <input type="radio" name={`ventebot-setup-${mappingProduct.id}`} value="existing" checked={setupMode === 'existing'} onChange={() => setSetupMode('existing')} />
+            <span><span className="block text-sm font-bold">Map to an existing product</span><span className="mt-1 block text-xs leading-5 text-muted-foreground">Keep the current KeyTopia listing and connect it to this seller item.</span></span>
+          </label>
+          <label className={`flex cursor-pointer items-start gap-3 rounded-xl border p-4 ${setupMode === 'new' ? 'border-primary bg-primary/5' : 'border-border'}`}>
+            <input type="radio" name={`ventebot-setup-${mappingProduct.id}`} value="new" checked={setupMode === 'new'} onChange={() => setSetupMode('new')} />
+            <span><span className="block text-sm font-bold">Create a new store product</span><span className="mt-1 block text-xs leading-5 text-muted-foreground">Use the seller name and image, then set the price customers will pay.</span></span>
+          </label>
+        </div>
+      </fieldset>
       <div className="mt-5 grid gap-4">
-        <Field label="KeyTopia product">
+        {setupMode === 'existing' ? <Field label="KeyTopia product">
           <Select value={localProductId} onChange={(event) => setLocalProductId(event.target.value)} data-testid={`select-ventebot-local-product-${mappingProduct.id}`}>
             <option value="">Choose an existing product</option>
             {localProducts.map((product: any) => <option key={product.id} value={product.id}>{product.nameEn} · {money(product.priceUsd)}{product.active ? '' : ' · inactive'}</option>)}
           </Select>
-        </Field>
-        <Field label="Resale price (USD)" hint="The supplier response returns the expected margin shown on this page.">
+        </Field> : <p className="rounded-xl bg-muted/55 p-3 text-xs leading-5 text-muted-foreground">
+          The new product uses the supplier name and image. It is active only when the supplier listing is available; unavailable listings are created inactive.
+        </p>}
+        <Field label="Resale price (USD)" hint="Set the customer price. Margin is calculated against the current supplier price.">
           <Input type="number" min="0" step="0.01" value={resalePriceText} onChange={(event) => setResalePriceText(event.target.value)} placeholder="e.g. 7.50" data-testid={`input-ventebot-resale-price-${mappingProduct.id}`} />
         </Field>
+        <label className="flex items-start gap-3 rounded-xl border border-border p-4">
+          <input type="checkbox" checked={copyDescription} onChange={(event) => setCopyDescription(event.target.checked)} data-testid={`checkbox-ventebot-copy-description-${mappingProduct.id}`} />
+          <span><span className="block text-sm font-bold">Copy seller description into English instructions</span><span className="mt-1 block text-xs leading-5 text-muted-foreground">{setupMode === 'existing' ? 'This replaces the existing English instructions; Arabic instructions stay unchanged.' : 'The supplier provides one description, so Arabic instructions stay blank.'}</span></span>
+        </label>
         <div className="grid grid-cols-2 gap-3 rounded-xl bg-muted/55 p-4">
           <div><p className="text-[10px] font-bold uppercase tracking-[.08em] text-muted-foreground">Supplier price</p><p className="mt-1 font-mono font-bold">{money(mappingProduct.priceUsd)}</p></div>
           <div><p className="text-[10px] font-bold uppercase tracking-[.08em] text-muted-foreground">Current margin</p><p className="mt-1 font-mono font-bold text-primary">{mappingProduct.expectedMarginUsd == null ? '—' : money(mappingProduct.expectedMarginUsd)}</p></div>
         </div>
       </div>
-      {updateMapping.isError && <p className="mt-4 rounded-lg bg-destructive/10 p-3 text-xs font-bold text-destructive" role="alert" data-testid="status-ventebot-mapping-error">Mapping could not be saved. Try again.</p>}
+      {(updateMapping.isError || createStoreProduct.isError) && <p className="mt-4 rounded-lg bg-destructive/10 p-3 text-xs font-bold text-destructive" role="alert" data-testid="status-ventebot-mapping-error">{mappingSaveErrorMessage}</p>}
       <div className="mt-5 flex flex-wrap justify-between gap-2">
-        <Button variant="quiet" className="text-destructive" disabled={!mappingProduct.mappedProductId || updateMapping.isPending} onClick={unlinkMapping} data-testid={`button-unlink-ventebot-product-${mappingProduct.id}`}><Unlink size={14} /> Unlink &amp; pause</Button>
-        <div className="flex gap-2"><Button variant="secondary" onClick={closeMapping}>Cancel</Button><Button disabled={!localProductId || !isValidResalePrice(resalePriceText) || updateMapping.isPending} onClick={saveMapping} data-testid={`button-save-ventebot-mapping-${mappingProduct.id}`}><Check size={15} /> {updateMapping.isPending ? 'Saving…' : 'Save mapping'}</Button></div>
+        <Button variant="quiet" className="text-destructive" disabled={!mappingProduct.mappedProductId || updateMapping.isPending || createStoreProduct.isPending} onClick={unlinkMapping} data-testid={`button-unlink-ventebot-product-${mappingProduct.id}`}><Unlink size={14} /> Unlink &amp; pause</Button>
+        <div className="flex gap-2"><Button variant="secondary" onClick={closeMapping}>Cancel</Button><Button disabled={(setupMode === 'existing' && !localProductId) || !isValidResalePrice(resalePriceText) || updateMapping.isPending || createStoreProduct.isPending} onClick={saveMapping} data-testid={`button-save-ventebot-mapping-${mappingProduct.id}`}><Check size={15} /> {setupMode === 'new' ? createStoreProduct.isPending ? 'Creating…' : 'Create store product' : updateMapping.isPending ? 'Saving…' : 'Save mapping'}</Button></div>
       </div>
     </Modal>}
   </div>;

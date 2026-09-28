@@ -1157,10 +1157,41 @@ export const updateVenteBotMappingBodyResalePriceUsdMultipleOf = 0.01;
 
 export const UpdateVenteBotMappingBody = zod.object({
   "productId": zod.string().uuid().nullable(),
-  "resalePriceUsd": zod.number().min(updateVenteBotMappingBodyResalePriceUsdMin).max(updateVenteBotMappingBodyResalePriceUsdMax).multipleOf(updateVenteBotMappingBodyResalePriceUsdMultipleOf).nullable()
+  "resalePriceUsd": zod.number().min(updateVenteBotMappingBodyResalePriceUsdMin).max(updateVenteBotMappingBodyResalePriceUsdMax).multipleOf(updateVenteBotMappingBodyResalePriceUsdMultipleOf).nullable(),
+  "copyDescription": zod.boolean().optional()
 })
 
 export const UpdateVenteBotMappingResponse = zod.object({
+  "supplierProductId": zod.number().int(),
+  "productId": zod.string().uuid().nullable(),
+  "resalePriceUsd": zod.number().nullable(),
+  "expectedMarginUsd": zod.number().nullable()
+})
+
+
+/**
+ * @summary Create a KeyTopia product from a supplier listing and map it
+ */
+
+
+
+export const CreateVenteBotStorefrontProductParams = zod.object({
+  "supplierProductId": zod.coerce.number().int().min(1)
+})
+
+export const createVenteBotStorefrontProductBodyResalePriceUsdMin = 0;
+export const createVenteBotStorefrontProductBodyResalePriceUsdMax = 9999999999.99;
+export const createVenteBotStorefrontProductBodyResalePriceUsdMultipleOf = 0.01;
+
+
+
+export const CreateVenteBotStorefrontProductBody = zod.object({
+  "resalePriceUsd": zod.number().min(createVenteBotStorefrontProductBodyResalePriceUsdMin).max(createVenteBotStorefrontProductBodyResalePriceUsdMax).multipleOf(createVenteBotStorefrontProductBodyResalePriceUsdMultipleOf),
+  "copyDescription": zod.boolean(),
+  "replaceMappedProductId": zod.string().uuid().nullable()
+})
+
+export const CreateVenteBotStorefrontProductResponse = zod.object({
   "supplierProductId": zod.number().int(),
   "productId": zod.string().uuid().nullable(),
   "resalePriceUsd": zod.number().nullable(),

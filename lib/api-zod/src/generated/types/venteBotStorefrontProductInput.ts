@@ -6,14 +6,13 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface VenteBotMappingInput {
-  /** @nullable */
-  productId: string | null;
+export interface VenteBotStorefrontProductInput {
   /**
      * @minimum 0
      * @maximum 9999999999.99
-     * @nullable
      */
-  resalePriceUsd: number | null;
-  copyDescription?: boolean;
+  resalePriceUsd: number;
+  copyDescription: boolean;
+  /** @nullable */
+  replaceMappedProductId: string | null;
 }

@@ -108,3 +108,4 @@ export * from './venteBotOrder';
 export * from './venteBotOrderPage';
 export * from './venteBotOrderStatus';
 export * from './venteBotRetryResult';
+export * from './venteBotStorefrontProductInput';

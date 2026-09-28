@@ -752,6 +752,29 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/VenteBotMappingResult"
+  /ventebot/catalog/{supplierProductId}/store-product:
+    post:
+      operationId: createVenteBotStorefrontProduct
+      tags: [ventebot]
+      summary: Create a KeyTopia product from a supplier listing and map it
+      parameters:
+        - in: path
+          name: supplierProductId
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VenteBotStorefrontProductInput"
+      responses:
+        "201":
+          description: Store product created and mapped
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VenteBotMappingResult"
   /ventebot/orders:
     get:
       operationId: listVenteBotOrders
@@ -1436,7 +1459,19 @@ components:
           minimum: 0
           maximum: 9999999999.99
           multipleOf: 0.01
+        copyDescription: { type: boolean }
       required: [productId, resalePriceUsd]
+    VenteBotStorefrontProductInput:
+      type: object
+      properties:
+        resalePriceUsd:
+          type: number
+          minimum: 0
+          maximum: 9999999999.99
+          multipleOf: 0.01
+        copyDescription: { type: boolean }
+        replaceMappedProductId: { type: ["string", "null"], format: uuid }
+      required: [resalePriceUsd, copyDescription, replaceMappedProductId]
     VenteBotMappingResult:
       type: object
       properties:
