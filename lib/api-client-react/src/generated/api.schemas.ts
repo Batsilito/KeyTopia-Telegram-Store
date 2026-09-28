@@ -786,6 +786,14 @@ export interface VenteBotConnectionStatus {
   failedFulfillmentCount: number;
 }
 
+export type VenteBotCatalogProductResalePricingMode = typeof VenteBotCatalogProductResalePricingMode[keyof typeof VenteBotCatalogProductResalePricingMode];
+
+
+export const VenteBotCatalogProductResalePricingMode = {
+  manual: 'manual',
+  fixed_markup: 'fixed_markup',
+} as const;
+
 /**
  * @nullable
  */
@@ -837,10 +845,21 @@ export interface VenteBotCatalogProduct {
   mappedProductName: string | null;
   /** @nullable */
   resalePriceUsd: number | null;
+  resalePricingMode: VenteBotCatalogProductResalePricingMode;
+  /** @nullable */
+  resaleMarkupUsd: number | null;
   /** @nullable */
   expectedMarginUsd: number | null;
   availability: VenteBotAvailability;
 }
+
+export type VenteBotLocalProductResalePricingMode = typeof VenteBotLocalProductResalePricingMode[keyof typeof VenteBotLocalProductResalePricingMode];
+
+
+export const VenteBotLocalProductResalePricingMode = {
+  manual: 'manual',
+  fixed_markup: 'fixed_markup',
+} as const;
 
 export interface VenteBotLocalProduct {
   id: string;
@@ -849,6 +868,9 @@ export interface VenteBotLocalProduct {
   active: boolean;
   /** @nullable */
   ventebotProductId: number | null;
+  resalePricingMode: VenteBotLocalProductResalePricingMode;
+  /** @nullable */
+  resaleMarkupUsd: number | null;
 }
 
 export interface VenteBotCatalog {
@@ -872,28 +894,67 @@ export interface VenteBotCatalogRefresh {
   supplierProductCount: number;
 }
 
+export type VenteBotMappingInputResalePricingMode = typeof VenteBotMappingInputResalePricingMode[keyof typeof VenteBotMappingInputResalePricingMode];
+
+
+export const VenteBotMappingInputResalePricingMode = {
+  manual: 'manual',
+  fixed_markup: 'fixed_markup',
+} as const;
+
 export interface VenteBotMappingInput {
   /** @nullable */
   productId: string | null;
+  resalePricingMode: VenteBotMappingInputResalePricingMode;
   /**
      * @minimum 0
      * @maximum 9999999999.99
      * @nullable
      */
   resalePriceUsd: number | null;
-  copyDescription?: boolean;
-}
-
-export interface VenteBotStorefrontProductInput {
   /**
      * @minimum 0
      * @maximum 9999999999.99
+     * @nullable
      */
-  resalePriceUsd: number;
+  resaleMarkupUsd: number | null;
+  copyDescription?: boolean;
+}
+
+export type VenteBotStorefrontProductInputResalePricingMode = typeof VenteBotStorefrontProductInputResalePricingMode[keyof typeof VenteBotStorefrontProductInputResalePricingMode];
+
+
+export const VenteBotStorefrontProductInputResalePricingMode = {
+  manual: 'manual',
+  fixed_markup: 'fixed_markup',
+} as const;
+
+export interface VenteBotStorefrontProductInput {
+  resalePricingMode: VenteBotStorefrontProductInputResalePricingMode;
+  /**
+     * @minimum 0
+     * @maximum 9999999999.99
+     * @nullable
+     */
+  resalePriceUsd: number | null;
+  /**
+     * @minimum 0
+     * @maximum 9999999999.99
+     * @nullable
+     */
+  resaleMarkupUsd: number | null;
   copyDescription: boolean;
   /** @nullable */
   replaceMappedProductId: string | null;
 }
+
+export type VenteBotMappingResultResalePricingMode = typeof VenteBotMappingResultResalePricingMode[keyof typeof VenteBotMappingResultResalePricingMode];
+
+
+export const VenteBotMappingResultResalePricingMode = {
+  manual: 'manual',
+  fixed_markup: 'fixed_markup',
+} as const;
 
 export interface VenteBotMappingResult {
   supplierProductId: number;
@@ -901,6 +962,9 @@ export interface VenteBotMappingResult {
   productId: string | null;
   /** @nullable */
   resalePriceUsd: number | null;
+  resalePricingMode: VenteBotMappingResultResalePricingMode;
+  /** @nullable */
+  resaleMarkupUsd: number | null;
   /** @nullable */
   expectedMarginUsd: number | null;
 }

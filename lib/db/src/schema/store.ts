@@ -147,6 +147,8 @@ export const products = pgTable("products", {
   duration: text("duration").notNull(),
   warranty: text("warranty").notNull(),
   priceUsd: numeric("price_usd", { precision: 12, scale: 2 }).notNull(),
+  resalePricingMode: text("resale_pricing_mode").default("manual").notNull(),
+  resaleMarkupUsd: numeric("resale_markup_usd", { precision: 12, scale: 2 }),
   instructionsEn: text("instructions_en").default("").notNull(),
   instructionsAr: text("instructions_ar").default("").notNull(),
   imageUrl: text("image_url"),

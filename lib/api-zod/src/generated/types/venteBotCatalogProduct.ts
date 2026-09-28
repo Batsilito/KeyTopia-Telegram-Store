@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { VenteBotAvailability } from './venteBotAvailability';
+import type { VenteBotCatalogProductResalePricingMode } from './venteBotCatalogProductResalePricingMode';
 
 export interface VenteBotCatalogProduct {
   id: number;
@@ -34,6 +35,9 @@ export interface VenteBotCatalogProduct {
   mappedProductName: string | null;
   /** @nullable */
   resalePriceUsd: number | null;
+  resalePricingMode: VenteBotCatalogProductResalePricingMode;
+  /** @nullable */
+  resaleMarkupUsd: number | null;
   /** @nullable */
   expectedMarginUsd: number | null;
   availability: VenteBotAvailability;

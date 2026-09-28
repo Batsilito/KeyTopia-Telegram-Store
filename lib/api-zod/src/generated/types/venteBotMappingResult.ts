@@ -5,6 +5,7 @@
  * KeyTopia Telegram store operations API
  * OpenAPI spec version: 0.1.0
  */
+import type { VenteBotMappingResultResalePricingMode } from './venteBotMappingResultResalePricingMode';
 
 export interface VenteBotMappingResult {
   supplierProductId: number;
@@ -12,6 +13,9 @@ export interface VenteBotMappingResult {
   productId: string | null;
   /** @nullable */
   resalePriceUsd: number | null;
+  resalePricingMode: VenteBotMappingResultResalePricingMode;
+  /** @nullable */
+  resaleMarkupUsd: number | null;
   /** @nullable */
   expectedMarginUsd: number | null;
 }

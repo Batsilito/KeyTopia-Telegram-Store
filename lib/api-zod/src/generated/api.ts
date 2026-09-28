@@ -1101,6 +1101,8 @@ export const GetVenteBotCatalogResponse = zod.object({
   "mappedProductId": zod.string().uuid().nullable(),
   "mappedProductName": zod.string().nullable(),
   "resalePriceUsd": zod.number().nullable(),
+  "resalePricingMode": zod.enum(['manual', 'fixed_markup']),
+  "resaleMarkupUsd": zod.number().nullable(),
   "expectedMarginUsd": zod.number().nullable(),
   "availability": zod.object({
   "available": zod.boolean(),
@@ -1113,7 +1115,9 @@ export const GetVenteBotCatalogResponse = zod.object({
   "nameEn": zod.string(),
   "priceUsd": zod.number(),
   "active": zod.boolean(),
-  "ventebotProductId": zod.number().int().nullable()
+  "ventebotProductId": zod.number().int().nullable(),
+  "resalePricingMode": zod.enum(['manual', 'fixed_markup']),
+  "resaleMarkupUsd": zod.number().nullable()
 }))
 })
 
@@ -1153,11 +1157,17 @@ export const updateVenteBotMappingBodyResalePriceUsdMin = 0;
 export const updateVenteBotMappingBodyResalePriceUsdMax = 9999999999.99;
 export const updateVenteBotMappingBodyResalePriceUsdMultipleOf = 0.01;
 
+export const updateVenteBotMappingBodyResaleMarkupUsdMin = 0;
+export const updateVenteBotMappingBodyResaleMarkupUsdMax = 9999999999.99;
+export const updateVenteBotMappingBodyResaleMarkupUsdMultipleOf = 0.01;
+
 
 
 export const UpdateVenteBotMappingBody = zod.object({
   "productId": zod.string().uuid().nullable(),
+  "resalePricingMode": zod.enum(['manual', 'fixed_markup']),
   "resalePriceUsd": zod.number().min(updateVenteBotMappingBodyResalePriceUsdMin).max(updateVenteBotMappingBodyResalePriceUsdMax).multipleOf(updateVenteBotMappingBodyResalePriceUsdMultipleOf).nullable(),
+  "resaleMarkupUsd": zod.number().min(updateVenteBotMappingBodyResaleMarkupUsdMin).max(updateVenteBotMappingBodyResaleMarkupUsdMax).multipleOf(updateVenteBotMappingBodyResaleMarkupUsdMultipleOf).nullable(),
   "copyDescription": zod.boolean().optional()
 })
 
@@ -1165,6 +1175,8 @@ export const UpdateVenteBotMappingResponse = zod.object({
   "supplierProductId": zod.number().int(),
   "productId": zod.string().uuid().nullable(),
   "resalePriceUsd": zod.number().nullable(),
+  "resalePricingMode": zod.enum(['manual', 'fixed_markup']),
+  "resaleMarkupUsd": zod.number().nullable(),
   "expectedMarginUsd": zod.number().nullable()
 })
 
@@ -1183,10 +1195,16 @@ export const createVenteBotStorefrontProductBodyResalePriceUsdMin = 0;
 export const createVenteBotStorefrontProductBodyResalePriceUsdMax = 9999999999.99;
 export const createVenteBotStorefrontProductBodyResalePriceUsdMultipleOf = 0.01;
 
+export const createVenteBotStorefrontProductBodyResaleMarkupUsdMin = 0;
+export const createVenteBotStorefrontProductBodyResaleMarkupUsdMax = 9999999999.99;
+export const createVenteBotStorefrontProductBodyResaleMarkupUsdMultipleOf = 0.01;
+
 
 
 export const CreateVenteBotStorefrontProductBody = zod.object({
-  "resalePriceUsd": zod.number().min(createVenteBotStorefrontProductBodyResalePriceUsdMin).max(createVenteBotStorefrontProductBodyResalePriceUsdMax).multipleOf(createVenteBotStorefrontProductBodyResalePriceUsdMultipleOf),
+  "resalePricingMode": zod.enum(['manual', 'fixed_markup']),
+  "resalePriceUsd": zod.number().min(createVenteBotStorefrontProductBodyResalePriceUsdMin).max(createVenteBotStorefrontProductBodyResalePriceUsdMax).multipleOf(createVenteBotStorefrontProductBodyResalePriceUsdMultipleOf).nullable(),
+  "resaleMarkupUsd": zod.number().min(createVenteBotStorefrontProductBodyResaleMarkupUsdMin).max(createVenteBotStorefrontProductBodyResaleMarkupUsdMax).multipleOf(createVenteBotStorefrontProductBodyResaleMarkupUsdMultipleOf).nullable(),
   "copyDescription": zod.boolean(),
   "replaceMappedProductId": zod.string().uuid().nullable()
 })
@@ -1195,6 +1213,8 @@ export const CreateVenteBotStorefrontProductResponse = zod.object({
   "supplierProductId": zod.number().int(),
   "productId": zod.string().uuid().nullable(),
   "resalePriceUsd": zod.number().nullable(),
+  "resalePricingMode": zod.enum(['manual', 'fixed_markup']),
+  "resaleMarkupUsd": zod.number().nullable(),
   "expectedMarginUsd": zod.number().nullable()
 })
 

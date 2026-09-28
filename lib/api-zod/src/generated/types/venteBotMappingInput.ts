@@ -5,15 +5,23 @@
  * KeyTopia Telegram store operations API
  * OpenAPI spec version: 0.1.0
  */
+import type { VenteBotMappingInputResalePricingMode } from './venteBotMappingInputResalePricingMode';
 
 export interface VenteBotMappingInput {
   /** @nullable */
   productId: string | null;
+  resalePricingMode: VenteBotMappingInputResalePricingMode;
   /**
      * @minimum 0
      * @maximum 9999999999.99
      * @nullable
      */
   resalePriceUsd: number | null;
+  /**
+     * @minimum 0
+     * @maximum 9999999999.99
+     * @nullable
+     */
+  resaleMarkupUsd: number | null;
   copyDescription?: boolean;
 }
