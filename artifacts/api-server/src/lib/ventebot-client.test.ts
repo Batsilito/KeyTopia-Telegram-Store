@@ -32,6 +32,19 @@ test("catalog refresh sends and reuses the supplier ETag", async () => {
           delivery_type: "stock",
           stock: 4,
           api_test: false,
+        }, {
+          id: 11,
+          name: "No standard price",
+          description: "Optional standard price omitted",
+          emoji: null,
+          image_url: null,
+          price_usd: 5,
+          pricing_type: "fixed",
+          special_price_expires_at: null,
+          warranty_days: 0,
+          delivery_type: "stock",
+          stock: 2,
+          api_test: false,
         }],
       }), {
         status: 200,
@@ -48,6 +61,8 @@ test("catalog refresh sends and reuses the supplier ETag", async () => {
   if (first.notModified) return;
   assert.equal(first.products[0]?.id, 10);
   assert.equal(first.products[0]?.stock, 4);
+  assert.equal(first.products[0]?.standardPriceUsd, 4);
+  assert.equal(first.products[1]?.standardPriceUsd, null);
   assert.equal(requests[0]?.headers.get("X-Reseller-Key"), "unit-test-key");
 
   const second = await client.getProducts(first.etag);

@@ -132,7 +132,8 @@ function parseProduct(value: unknown): VenteBotProduct {
     emoji: nullableString(product.emoji, "product.emoji"),
     imageUrl: nullableString(product.image_url, "product.image_url"),
     priceUsd: numericValue(product.price_usd, "product.price_usd"),
-    standardPriceUsd: product.standard_price_usd === null
+    standardPriceUsd: product.standard_price_usd === null ||
+        product.standard_price_usd === undefined
       ? null
       : numericValue(product.standard_price_usd, "product.standard_price_usd"),
     pricingType: product.pricing_type,
