@@ -2738,6 +2738,80 @@ export const useCreateFlashSale = <TError = ErrorType<unknown>,
       return useMutation(getCreateFlashSaleMutationOptions(options));
     }
 
+export const getStopFlashSaleUrl = (id: string,) => {
+
+
+
+
+  return `/api/flash-sales/${id}/stop`
+}
+
+/**
+ * @summary Stop an active flash sale
+ */
+export const stopFlashSale = async (id: string, options?: Parameters<typeof customFetch>[1]): Promise<FlashSale> => {
+
+  return customFetch<FlashSale>(getStopFlashSaleUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getStopFlashSaleMutationKey = () => ['stopFlashSale'] as const;
+
+export const getStopFlashSaleMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof stopFlashSale>>, TError,StopFlashSaleMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof stopFlashSale>>, TError,StopFlashSaleMutationVariables, TContext> => {
+
+const mutationKey = getStopFlashSaleMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof stopFlashSale>>, StopFlashSaleMutationVariables> = (props) => {
+          const {id} = props ?? {};
+
+          return  stopFlashSale(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type StopFlashSaleMutationResult = NonNullable<Awaited<ReturnType<typeof stopFlashSale>>>
+
+    export type StopFlashSaleMutationError = ErrorType<void>
+    export type StopFlashSaleMutationVariables = {id: string}
+
+    /**
+ * @summary Stop an active flash sale
+ */
+export const useStopFlashSale = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof stopFlashSale>>, TError,StopFlashSaleMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof stopFlashSale>>,
+        TError,
+        StopFlashSaleMutationVariables,
+        TContext
+      > => {
+      return useMutation(getStopFlashSaleMutationOptions(options));
+    }
+
 export const getListPromoCodesUrl = () => {
 
 

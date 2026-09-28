@@ -907,6 +907,27 @@ export const CreateFlashSaleResponse = zod.object({
 
 
 /**
+ * @summary Stop an active flash sale
+ */
+export const StopFlashSaleParams = zod.object({
+  "id": zod.coerce.string().uuid()
+})
+
+export const StopFlashSaleResponse = zod.object({
+  "id": zod.string().uuid(),
+  "productId": zod.string().uuid(),
+  "productName": zod.string(),
+  "originalPriceUsd": zod.number(),
+  "salePriceUsd": zod.number(),
+  "discountPercent": zod.number(),
+  "startsAt": zod.coerce.date(),
+  "endsAt": zod.coerce.date(),
+  "status": zod.enum(['scheduled', 'active', 'paused', 'expired', 'cancelled']),
+  "quantity": zod.number().int().nullable()
+})
+
+
+/**
  * @summary List promo codes
  */
 export const ListPromoCodesResponseItem = zod.object({

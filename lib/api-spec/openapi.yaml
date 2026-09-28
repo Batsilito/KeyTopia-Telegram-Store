@@ -592,6 +592,29 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/FlashSale"
+  /flash-sales/{id}/stop:
+    post:
+      operationId: stopFlashSale
+      tags: [promotions]
+      summary: Stop an active flash sale
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Stopped flash sale
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FlashSale"
+        "404":
+          description: Flash sale not found
+        "409":
+          description: Flash sale is not active
   /promo-codes:
     get:
       operationId: listPromoCodes
