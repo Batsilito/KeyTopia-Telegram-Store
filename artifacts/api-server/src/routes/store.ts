@@ -91,6 +91,7 @@ import {
   upsertTelegramPaymentNotification,
 } from "../lib/binance-topups";
 import { createVenteBotFulfillmentValues } from "../lib/ventebot-fulfillment";
+import { verifyVenteBotCheckoutPrice } from "../lib/ventebot-catalog-sync";
 
 const router: IRouter = Router();
 
@@ -1101,6 +1102,35 @@ router.post("/payments/:paymentId/confirm", async (req, res) => {
         id: manualTopUp.id,
       },
     );
+  }
+  const paymentPreflightRows = await db
+    .select({
+      checkoutSessionId: payments.checkoutSessionId,
+      status: payments.status,
+      orderId: payments.orderId,
+    })
+    .from(payments)
+    .where(eq(payments.id, req.params.paymentId))
+    .limit(1);
+  const paymentPreflight = paymentPreflightRows[0];
+  if (
+    paymentPreflight &&
+    paymentPreflight.status !== "confirmed" &&
+    paymentPreflight.checkoutSessionId
+  ) {
+    const verification = await verifyVenteBotCheckoutPrice(
+      paymentPreflight.checkoutSessionId,
+    );
+    if (
+      verification.supplierLinked &&
+      (!verification.verified || verification.priceChanged)
+    ) {
+      return res.status(409).json({
+        error: verification.priceChanged
+          ? "Supplier price changed after payment. Review or refund the payment before creating an order."
+          : "Supplier price and stock could not be verified. Review the payment before creating an order.",
+      });
+    }
   }
   const result = await db.transaction(async (tx) => {
     const paymentRows = await tx

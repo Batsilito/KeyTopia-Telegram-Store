@@ -91,6 +91,40 @@ export function calculateVenteBotResalePrice(
   return isValidUsdAmount(resalePrice) ? resalePrice : null;
 }
 
+export function calculateVenteBotResalePriceAfterCostChange(input: {
+  previousSupplierPriceUsd: number | string | null;
+  supplierPriceUsd: number | string;
+  pricingMode: VenteBotResalePricingMode;
+  resalePriceUsd: number | string;
+  resaleMarkupUsd: number | string | null;
+}): number | null {
+  if (input.pricingMode === "fixed_markup") {
+    return calculateVenteBotResalePrice(
+      input.supplierPriceUsd,
+      "fixed_markup",
+      null,
+      input.resaleMarkupUsd === null ? null : Number(input.resaleMarkupUsd),
+    );
+  }
+
+  if (
+    input.previousSupplierPriceUsd === null ||
+    !isValidUsdAmount(Number(input.previousSupplierPriceUsd)) ||
+    !isValidUsdAmount(Number(input.supplierPriceUsd)) ||
+    !isValidUsdAmount(Number(input.resalePriceUsd))
+  ) {
+    return null;
+  }
+
+  const priceAfterCostChange =
+    (
+      usdToCents(input.resalePriceUsd) -
+      usdToCents(input.previousSupplierPriceUsd) +
+      usdToCents(input.supplierPriceUsd)
+    ) / 100;
+  return isValidUsdAmount(priceAfterCostChange) ? priceAfterCostChange : null;
+}
+
 export function getVenteBotAvailability(
   product: VenteBotCatalogAvailability,
   apiKeyConfigured: boolean,

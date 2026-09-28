@@ -12,6 +12,7 @@ import {
 } from "./ventebot-client";
 import { evaluateVenteBotProviderOrder } from "./ventebot-provider-order";
 import { venteBotIdempotencyKey } from "./ventebot-rules";
+import { verifyVenteBotCheckoutPrice } from "./ventebot-catalog-sync";
 
 const ORDER_STALE_AFTER_MS = 2 * 60 * 1000;
 const DELIVERY_RECHECK_DELAY_MS = 30 * 1000;
@@ -281,10 +282,28 @@ export async function processVenteBotFulfillment(
       });
       acquisitionCostUsd = providerOrder.amountUsd;
     } else {
-      const quote = await client.quote(
-        fulfillment.ventebotProductId,
-        order.quantity,
+      if (!order.checkoutSessionId) {
+        throw new Error(
+          "VenteBot checkout price snapshot is missing; supplier fulfillment is blocked.",
+        );
+      }
+      const verification = await verifyVenteBotCheckoutPrice(
+        order.checkoutSessionId,
       );
+      if (!verification.verified) {
+        throw new Error(
+          `Unable to verify VenteBot price and stock before fulfillment: ${verification.reason ?? "unknown supplier error"}`,
+        );
+      }
+      if (verification.priceChanged) {
+        throw new Error(
+          "VenteBot resale price changed after customer payment; supplier fulfillment is blocked for review.",
+        );
+      }
+      const quote = verification.quote;
+      if (!quote) {
+        throw new Error("VenteBot did not provide a current checkout quote.");
+      }
       if (quote.deliveryType === "activation") {
         throw new Error(
           "VenteBot requires an activation identifier; this product is not enabled for sale.",

@@ -38,6 +38,7 @@ import {
   isValidVenteBotMappingInput,
   isValidVenteBotResalePricingInput,
 } from "../lib/ventebot-rules";
+import { refreshVenteBotCatalog } from "../lib/ventebot-catalog-sync";
 import { broadcastNewProduct, retryAndNotifyVenteBotOrder } from "../bot";
 
 const router: IRouter = Router();
@@ -69,45 +70,6 @@ function asNumber(value: string | number | null | undefined) {
 
 function hasVenteBotKey() {
   return Boolean(process.env.VENTEBOT_RESELLER_KEY?.trim());
-}
-
-function getCatalogRefreshErrorContext(error: unknown): Record<string, unknown> {
-  const context: Record<string, unknown> = {
-    errorType: error instanceof Error ? error.name : typeof error,
-  };
-
-  if (error && typeof error === "object") {
-    if ("statusCode" in error) {
-      const statusCode = Number(error.statusCode);
-      if (Number.isFinite(statusCode)) context.supplierStatusCode = statusCode;
-    }
-    if (
-      "code" in error &&
-      typeof error.code === "string" &&
-      /^[A-Z0-9_]{2,16}$/.test(error.code)
-    ) {
-      context.errorCode = error.code;
-    }
-  }
-
-  if (error instanceof SyntaxError) {
-    context.failureKind = "invalid_json";
-  } else if (
-    error instanceof Error &&
-    (
-      error.message === "Invalid VenteBot catalog response" ||
-      error.message.startsWith("Invalid VenteBot response:")
-    )
-  ) {
-    context.failureKind = "invalid_supplier_payload";
-    context.validationError = error.message;
-  } else if (context.supplierStatusCode !== undefined) {
-    context.failureKind = "supplier_http_error";
-  } else {
-    context.failureKind = "network_or_internal_error";
-  }
-
-  return context;
 }
 
 async function updateConnectionState(input: {
@@ -300,188 +262,12 @@ router.post("/ventebot/catalog/refresh", async (req, res): Promise<void> => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   if (!requireSuperAdmin(admin, res)) return;
-  if (!hasVenteBotKey()) {
-    res.status(503).json({
-      error: "Add VENTEBOT_RESELLER_KEY in Replit Secrets.",
-    });
-    return;
-  }
-
-  const stateRows = await db.select()
-    .from(ventebotCatalogSyncState)
-    .where(eq(ventebotCatalogSyncState.id, 1))
-    .limit(1);
-  const currentState = stateRows[0];
-  const syncedAt = new Date();
   try {
-    const client = createVenteBotClient(process.env.VENTEBOT_RESELLER_KEY!);
-    const catalog = await client.getProducts(currentState?.etag);
-    if (catalog.notModified) {
-      const activeCountRows = await db.select({ value: count() })
-        .from(ventebotCatalogProducts)
-        .where(eq(ventebotCatalogProducts.catalogActive, true));
-      if (currentState) {
-        await db.update(ventebotCatalogSyncState)
-          .set({
-            etag: catalog.etag ?? currentState.etag,
-            updatedAt: syncedAt,
-          })
-          .where(eq(ventebotCatalogSyncState.id, 1));
-      }
-      await updateConnectionState({
-        status: "connected",
-        checkedAt: syncedAt,
-        error: null,
-      });
-      res.json(RefreshVenteBotCatalogResponse.parse({
-        notModified: true,
-        lastSyncedAt: iso(currentState?.lastSyncedAt),
-        supplierProductCount: Number(activeCountRows[0]?.value ?? 0),
-      }));
-      return;
-    }
-
-    await db.transaction(async (tx) => {
-      await tx.update(ventebotCatalogProducts)
-        .set({ catalogActive: false, updatedAt: syncedAt });
-      if (catalog.products.length) {
-        await tx.insert(ventebotCatalogProducts)
-          .values(catalog.products.map((product) => ({
-            id: product.id,
-            name: product.name,
-            description: product.description,
-            emoji: product.emoji,
-            imageUrl: product.imageUrl,
-            priceUsd: product.priceUsd.toFixed(2),
-            standardPriceUsd: product.standardPriceUsd?.toFixed(2) ?? null,
-            pricingType: product.pricingType,
-            specialPriceExpiresAt: product.specialPriceExpiresAt,
-            warrantyDays: product.warrantyDays,
-            deliveryType: product.deliveryType,
-            stock: product.stock,
-            apiTest: product.apiTest,
-            catalogActive: true,
-            lastSyncedAt: syncedAt,
-            updatedAt: syncedAt,
-          })))
-          .onConflictDoUpdate({
-            target: ventebotCatalogProducts.id,
-            set: {
-              name: sql`excluded.name`,
-              description: sql`excluded.description`,
-              emoji: sql`excluded.emoji`,
-              imageUrl: sql`excluded.image_url`,
-              priceUsd: sql`excluded.price_usd`,
-              standardPriceUsd: sql`excluded.standard_price_usd`,
-              pricingType: sql`excluded.pricing_type`,
-              specialPriceExpiresAt: sql`excluded.special_price_expires_at`,
-              warrantyDays: sql`excluded.warranty_days`,
-              deliveryType: sql`excluded.delivery_type`,
-              stock: sql`excluded.stock`,
-              apiTest: sql`excluded.api_test`,
-              catalogActive: true,
-              lastSyncedAt: syncedAt,
-              updatedAt: syncedAt,
-            },
-          });
-      }
-      if (catalog.products.length) {
-        const supplierPriceById = new Map(
-          catalog.products.map((product) => [product.id, product.priceUsd]),
-        );
-        const fixedPricingProducts = await tx.select({
-          id: products.id,
-          supplierProductId: products.ventebotProductId,
-          priceUsd: products.priceUsd,
-          resaleMarkupUsd: products.resaleMarkupUsd,
-        })
-          .from(products)
-          .where(and(
-            eq(products.resalePricingMode, "fixed_markup"),
-            inArray(products.ventebotProductId, catalog.products.map(
-              (product) => product.id,
-            )),
-          ))
-          .for("update");
-        for (const product of fixedPricingProducts) {
-          const supplierProductId = product.supplierProductId;
-          const supplierPriceUsd = supplierProductId === null
-            ? undefined
-            : supplierPriceById.get(supplierProductId);
-          const resalePriceUsd = supplierPriceUsd === undefined ||
-              product.resaleMarkupUsd === null
-            ? null
-            : calculateVenteBotResalePrice(
-                supplierPriceUsd,
-                "fixed_markup",
-                null,
-                Number(product.resaleMarkupUsd),
-              );
-          if (
-            resalePriceUsd === null ||
-            !isValidVenteBotResalePricingInput(
-              "manual",
-              resalePriceUsd,
-              null,
-            )
-          ) {
-            await tx.update(products)
-              .set({ active: false, updatedAt: syncedAt })
-              .where(eq(products.id, product.id));
-            req.log.warn(
-              { productId: product.id, supplierProductId },
-              "Fixed-add-on price exceeds the supported range; product deactivated",
-            );
-            continue;
-          }
-          if (Number(product.priceUsd) !== resalePriceUsd) {
-            await tx.update(products)
-              .set({
-                priceUsd: resalePriceUsd.toFixed(2),
-                updatedAt: syncedAt,
-              })
-              .where(eq(products.id, product.id));
-          }
-        }
-      }
-      await tx.insert(ventebotCatalogSyncState)
-        .values({
-          id: 1,
-          etag: catalog.etag,
-          lastSyncedAt: syncedAt,
-          lastConnectionCheckAt: syncedAt,
-          lastConnectionStatus: "connected",
-          lastConnectionError: null,
-          updatedAt: syncedAt,
-        })
-        .onConflictDoUpdate({
-          target: ventebotCatalogSyncState.id,
-          set: {
-            etag: catalog.etag,
-            lastSyncedAt: syncedAt,
-            lastConnectionCheckAt: syncedAt,
-            lastConnectionStatus: "connected",
-            lastConnectionError: null,
-            updatedAt: syncedAt,
-          },
-        });
-    });
-
-    res.json(RefreshVenteBotCatalogResponse.parse({
-      notModified: false,
-      lastSyncedAt: syncedAt.toISOString(),
-      supplierProductCount: catalog.products.length,
-    }));
+    const result = await refreshVenteBotCatalog();
+    res.json(RefreshVenteBotCatalogResponse.parse(result));
   } catch (error) {
     const message = safeVenteBotErrorMessage(error);
-    await updateConnectionState({
-      status: "error",
-      error: message,
-    });
-    req.log.warn(
-      getCatalogRefreshErrorContext(error),
-      "VenteBot catalog refresh failed",
-    );
+    req.log.warn({ err: error }, "VenteBot catalog refresh failed");
     res.status(503).json({ error: message });
   }
 });

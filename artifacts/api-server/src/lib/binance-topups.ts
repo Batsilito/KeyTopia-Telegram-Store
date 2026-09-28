@@ -16,6 +16,7 @@ import {
 } from "@workspace/db";
 import { logger } from "./logger";
 import { createVenteBotFulfillmentValues } from "./ventebot-fulfillment";
+import { verifyVenteBotCheckoutPrice } from "./ventebot-catalog-sync";
 import {
   BINANCE_VERIFICATION_GRACE_MS,
   evaluateBinancePayment,
@@ -667,6 +668,38 @@ async function failProductPayment(
   });
 }
 
+async function failProductPaymentForStaleSupplierPrice(
+  payment: {
+    id: string;
+    userId: string;
+    checkoutSessionId: string;
+    amountUsd: string;
+  },
+  transactionId: string,
+) {
+  const verification = await verifyVenteBotCheckoutPrice(
+    payment.checkoutSessionId,
+  );
+  if (
+    !verification.supplierLinked ||
+    (verification.verified && !verification.priceChanged)
+  ) {
+    return null;
+  }
+  const reason = verification.priceChanged
+    ? "The supplier resale price changed after payment was submitted. Manual customer review or refund is required before creating an order."
+    : `Supplier price or stock could not be verified before order creation: ${verification.reason ?? "unknown supplier error"}`;
+  return failProductPayment(
+    {
+      id: payment.id,
+      userId: payment.userId,
+      amountUsd: payment.amountUsd,
+      submittedTransactionId: transactionId,
+    },
+    reason,
+  );
+}
+
 async function hasClaimedTransaction(transactionId: string) {
   const claims = await db
     .select({ id: binanceTransactionClaims.id })
@@ -812,6 +845,14 @@ export async function pollBinancePayments(): Promise<BinancePaymentProcessingRes
           });
         }
       } else {
+        const stalePriceFailure = await failProductPaymentForStaleSupplierPrice(
+          candidate.record,
+          candidate.transactionId,
+        );
+        if (stalePriceFailure) {
+          processed.push(stalePriceFailure);
+          continue;
+        }
         const result = await confirmProductPayment(candidate.record, candidate.transactionId);
         if (result) {
           usedTransactionIds.add(candidate.transactionId);
@@ -887,6 +928,14 @@ export async function pollBinancePayments(): Promise<BinancePaymentProcessingRes
         });
       }
     } else {
+      const stalePriceFailure = await failProductPaymentForStaleSupplierPrice(
+        candidate.record,
+        match,
+      );
+      if (stalePriceFailure) {
+        processed.push(stalePriceFailure);
+        continue;
+      }
       const result = await confirmProductPayment(candidate.record, match);
       if (result) {
         usedTransactionIds.add(match);

@@ -41,6 +41,11 @@ import {
 } from "../lib/ventebot-fulfillment";
 import { getVenteBotAvailability } from "../lib/ventebot-rules";
 import {
+  refreshVenteBotCatalog,
+  refreshVenteBotProductQuote,
+  verifyVenteBotCheckoutPrice,
+} from "../lib/ventebot-catalog-sync";
+import {
   calculatePercentageAmount,
   rewardsAreEligible,
   VERIFIED_REFERRAL_REWARD_USD,
@@ -1319,7 +1324,10 @@ function isCheckoutPaymentMethod(method: string): method is CheckoutPaymentMetho
 const supportDraftUsers = new Set<string>();
 const supportReplyDrafts = new Map<string, string>();
 const walletTopUpDrafts = new Map<string, { method: "binance"; amount?: number }>();
-const customQuantityProducts = new Map<string, string>();
+const customQuantityProducts = new Map<
+  string,
+  { productId: string; expectedPriceCents?: number }
+>();
 
 function createSupportTicketNumber() {
   return `KT-${Date.now().toString(36).toUpperCase()}-${randomBytes(3).toString("hex").toUpperCase()}`;
@@ -2040,6 +2048,52 @@ async function getProductAvailability(product: typeof products.$inferSelect) {
   return { inStock: quantity > 0, quantity: String(quantity), maxQuantity: quantity };
 }
 
+async function refreshSupplierCatalogForBuyer() {
+  try {
+    await refreshVenteBotCatalog();
+    return true;
+  } catch (error) {
+    logger.warn({ err: error }, "Unable to refresh VenteBot catalog for buyer");
+    return false;
+  }
+}
+
+function usdPriceCents(value: string | number) {
+  return Math.round(Number(value) * 100);
+}
+
+function parseUsdPriceToken(value: string | undefined) {
+  if (!value || !/^[0-9a-z]+$/i.test(value)) return undefined;
+  const cents = Number.parseInt(value, 36);
+  return Number.isSafeInteger(cents) && cents >= 0 ? cents : undefined;
+}
+
+async function getBuyerProductState(
+  product: typeof products.$inferSelect,
+  quantity: number,
+) {
+  if (product.ventebotProductId === null) {
+    return {
+      product,
+      availability: await getProductAvailability(product),
+    };
+  }
+  const verified = await refreshVenteBotProductQuote(
+    product.ventebotProductId,
+    quantity,
+  );
+  return {
+    product: verified.product,
+    availability: {
+      inStock: verified.inStock,
+      quantity: verified.quote.stock === null
+        ? "∞"
+        : String(verified.quote.stock),
+      maxQuantity: verified.maxQuantity,
+    },
+  };
+}
+
 async function getActiveFlashSale(productId: string, now = new Date()) {
   const rows = await db
     .select()
@@ -2128,18 +2182,42 @@ async function showShop(
 ) {
   if (!accessAlreadyChecked && !(await ensureAccess(ctx, user))) return;
   const language = languageOf(user);
-  const rows = await db
+  const allRows = await db
     .select()
     .from(products)
     .where(eq(products.active, true))
     .orderBy(desc(products.createdAt));
+  const hasSupplierProducts = allRows.some(
+    (product) => product.ventebotProductId !== null,
+  );
+  const supplierCatalogAvailable = hasSupplierProducts
+    ? await refreshSupplierCatalogForBuyer()
+    : true;
+  let rows = allRows.filter(
+    (product) => product.ventebotProductId === null,
+  );
+  if (supplierCatalogAvailable) {
+    const activeSupplierRows = await db
+      .select({ id: ventebotCatalogProducts.id })
+      .from(ventebotCatalogProducts)
+      .where(eq(ventebotCatalogProducts.catalogActive, true));
+    const activeSupplierIds = new Set(activeSupplierRows.map((row) => row.id));
+    rows = allRows.filter(
+      (product) =>
+        product.ventebotProductId === null ||
+        activeSupplierIds.has(product.ventebotProductId),
+    );
+  }
   if (rows.length === 0) {
+    const message = allRows.length > 0
+      ? t(language, "supplierUnavailable")
+      : t(language, "noProducts");
     if (ctx.callbackQuery) {
-      await replaceCallbackMessage(ctx, t(language, "noProducts"), {
+      await replaceCallbackMessage(ctx, message, {
         reply_markup: customerKeyboard(language),
       });
     } else {
-      await ctx.reply(t(language, "noProducts"), { reply_markup: customerKeyboard(language) });
+      await ctx.reply(message, { reply_markup: customerKeyboard(language) });
     }
     return;
   }
@@ -2272,9 +2350,46 @@ async function showProduct(
 ) {
   if (!accessAlreadyChecked && !(await ensureAccess(ctx, user))) return;
   const rows = await db.select().from(products).where(and(eq(products.id, productId), eq(products.active, true))).limit(1);
-  const product = rows[0];
+  let product = rows[0];
   if (!product) return;
   const language = languageOf(user);
+  if (product.ventebotProductId !== null) {
+    if (!(await refreshSupplierCatalogForBuyer())) {
+      await replaceCallbackMessage(ctx, t(language, "supplierUnavailable"), {
+        reply_markup: new InlineKeyboard()
+          .text(t(language, "refreshStock"), `product:refresh:${product.id}`)
+          .row()
+          .text(t(language, "backToShop"), "nav:shop"),
+      });
+      return;
+    }
+    const refreshedRows = await db
+      .select()
+      .from(products)
+      .where(and(eq(products.id, productId), eq(products.active, true)))
+      .limit(1);
+    product = refreshedRows[0];
+    if (!product) {
+      await replaceCallbackMessage(ctx, t(language, "outOfStock"), {
+        reply_markup: new InlineKeyboard().text(t(language, "backToShop"), "nav:shop"),
+      });
+      return;
+    }
+    const supplierRows = await db
+      .select({ catalogActive: ventebotCatalogProducts.catalogActive })
+      .from(ventebotCatalogProducts)
+      .where(eq(ventebotCatalogProducts.id, product.ventebotProductId!))
+      .limit(1);
+    if (!supplierRows[0]?.catalogActive) {
+      await replaceCallbackMessage(ctx, t(language, "supplierUnavailable"), {
+        reply_markup: new InlineKeyboard()
+          .text(t(language, "refreshStock"), `product:refresh:${product.id}`)
+          .row()
+          .text(t(language, "backToShop"), "nav:shop"),
+      });
+      return;
+    }
+  }
   const name = language === "ar" ? product.nameAr : product.nameEn;
   const instructions = language === "ar" ? product.instructionsAr : product.instructionsEn;
   const availability = await getProductAvailability(product);
@@ -2283,7 +2398,10 @@ async function showProduct(
   const keyboard = new InlineKeyboard();
   if (availability.inStock) {
     keyboard
-      .text(`${t(language, "buyNow")} · ${price} USDT`, `buy:${product.id}`)
+      .text(
+        `${t(language, "buyNow")} · ${price} USDT`,
+        `buy:${product.id}:${usdPriceCents(price).toString(36)}`,
+      )
       .success()
       .row();
   }
@@ -2342,14 +2460,32 @@ async function productTelegramPhoto(imageUrl: string, productId: string) {
   return new InputFile(buffer, `product-${productId}.${extension}`);
 }
 
-async function showQuantitySelector(ctx: Context, user: typeof users.$inferSelect, productId: string, requestedQuantity = 1) {
+async function showQuantitySelector(
+  ctx: Context,
+  user: typeof users.$inferSelect,
+  productId: string,
+  requestedQuantity = 1,
+  expectedPriceCents?: number,
+) {
   if (!(await ensureAccess(ctx, user))) return;
   const rows = await db.select().from(products).where(and(eq(products.id, productId), eq(products.active, true))).limit(1);
-  const product = rows[0];
+  let product = rows[0];
   if (!product) return;
-  const availability = await getProductAvailability(product);
+  let availability: Awaited<ReturnType<typeof getProductAvailability>>;
+  try {
+    const state = await getBuyerProductState(product, requestedQuantity);
+    product = state.product;
+    availability = state.availability;
+  } catch (error) {
+    logger.warn({ err: error, productId }, "Unable to verify product before quantity selection");
+    await replaceCallbackMessage(ctx, t(languageOf(user), "supplierUnavailable"), {
+      reply_markup: new InlineKeyboard().text(t(languageOf(user), "backToShop"), "nav:shop"),
+    });
+    return;
+  }
   const sale = await getActiveFlashSale(product.id);
   const price = effectiveProductPrice(product, sale);
+  const priceCents = usdPriceCents(price);
   const maxQuantity = availability.maxQuantity;
   if (!availability.inStock || maxQuantity < 1) {
     await ctx.reply(t(languageOf(user), "outOfStock"));
@@ -2362,17 +2498,35 @@ async function showQuantitySelector(ctx: Context, user: typeof users.$inferSelec
   const keyboard = new InlineKeyboard();
   for (const preset of [1, 2, 3]) {
     if (preset > maxQuantity) break;
-    keyboard.text(String(preset), `quantity:${product.id}:set:${preset}`).success();
+    keyboard
+      .text(
+        String(preset),
+        `quantity:${product.id}:set:${preset}:${priceCents.toString(36)}`,
+      )
+      .success();
   }
   keyboard
     .row()
-    .text(t(language, "customQuantity"), `quantity:${product.id}:custom`)
+    .text(
+      t(language, "customQuantity"),
+      `quantity:${product.id}:custom::${priceCents.toString(36)}`,
+    )
     .primary()
     .row()
     .text(t(language, "back"), `quantity:${product.id}:back`)
     .row();
   const text = [
     `<b>${t(language, "selectQuantity")}</b>`,
+    ...(expectedPriceCents !== undefined && expectedPriceCents !== priceCents
+      ? [
+          "",
+          escapeHtml(
+            t(language, "priceChangedNotice")
+              .replace("{old}", (expectedPriceCents / 100).toFixed(2))
+              .replace("{new}", (priceCents / 100).toFixed(2)),
+          ),
+        ]
+      : []),
     "",
     `<b>${escapeHtml(name)}</b>`,
     "",
@@ -2391,8 +2545,9 @@ async function acceptCustomQuantity(
   user: typeof users.$inferSelect,
   value: string,
 ) {
-  const productId = customQuantityProducts.get(user.id);
-  if (!productId) return false;
+  const customQuantity = customQuantityProducts.get(user.id);
+  if (!customQuantity) return false;
+  const productId = customQuantity.productId;
   const language = languageOf(user);
   const parsed = Number(value.trim());
   if (!/^\d+$/.test(value.trim()) || !Number.isSafeInteger(parsed) || parsed < 1) {
@@ -2419,22 +2574,58 @@ async function acceptCustomQuantity(
     return true;
   }
   customQuantityProducts.delete(user.id);
-  await beginCheckout(ctx, user, productId, parsed);
+  await showQuantitySelector(
+    ctx,
+    user,
+    productId,
+    parsed,
+    customQuantity.expectedPriceCents,
+  );
   return true;
 }
 
-async function beginCheckout(ctx: Context, user: typeof users.$inferSelect, productId: string, requestedQuantity = 1) {
+async function beginCheckout(
+  ctx: Context,
+  user: typeof users.$inferSelect,
+  productId: string,
+  requestedQuantity = 1,
+  expectedPriceCents?: number,
+) {
   if (!(await ensureAccess(ctx, user))) return;
   const rows = await db.select().from(products).where(and(eq(products.id, productId), eq(products.active, true))).limit(1);
-  const product = rows[0];
+  let product = rows[0];
   if (!product) return;
-  const availability = await getProductAvailability(product);
+  let availability: Awaited<ReturnType<typeof getProductAvailability>>;
+  try {
+    const state = await getBuyerProductState(product, requestedQuantity);
+    product = state.product;
+    availability = state.availability;
+  } catch (error) {
+    logger.warn({ err: error, productId }, "Unable to verify product before checkout");
+    await replaceCallbackMessage(ctx, t(languageOf(user), "supplierUnavailable"), {
+      reply_markup: new InlineKeyboard().text(t(languageOf(user), "backToShop"), "nav:shop"),
+    });
+    return;
+  }
   const sale = await getActiveFlashSale(product.id);
   const price = effectiveProductPrice(product, sale);
+  const priceCents = usdPriceCents(price);
   const maxQuantity = availability.maxQuantity;
   const quantity = Math.min(Math.max(Math.trunc(requestedQuantity), 1), maxQuantity);
   if (!availability.inStock || maxQuantity < 1 || quantity !== requestedQuantity) {
-    await ctx.reply(t(languageOf(user), "outOfStock"));
+    await replaceCallbackMessage(ctx, t(languageOf(user), "outOfStock"), {
+      reply_markup: new InlineKeyboard().text(t(languageOf(user), "backToShop"), "nav:shop"),
+    });
+    return;
+  }
+  if (expectedPriceCents !== undefined && expectedPriceCents !== priceCents) {
+    await showQuantitySelector(
+      ctx,
+      user,
+      productId,
+      requestedQuantity,
+      expectedPriceCents,
+    );
     return;
   }
   const total = (Number(price) * quantity).toFixed(2);
@@ -2526,15 +2717,15 @@ async function beginCheckout(ctx: Context, user: typeof users.$inferSelect, prod
   await replaceCallbackMessage(ctx, summary, { parse_mode: "HTML", reply_markup: keyboard });
 }
 
-async function cancelCheckout(ctx: Context, user: typeof users.$inferSelect, checkoutId: string) {
-  const cancelled = await db.transaction(async (tx) => {
+async function cancelCheckoutSession(checkoutId: string, userId: string) {
+  return db.transaction(async (tx) => {
     const rows = await tx
     .update(checkoutSessions)
     .set({ status: "cancelled", updatedAt: new Date() })
     .where(
       and(
         eq(checkoutSessions.id, checkoutId),
-        eq(checkoutSessions.userId, user.id),
+        eq(checkoutSessions.userId, userId),
         eq(checkoutSessions.status, "pending"),
       ),
     )
@@ -2550,6 +2741,52 @@ async function cancelCheckout(ctx: Context, user: typeof users.$inferSelect, che
     }
     return rows;
   });
+}
+
+async function ensureCheckoutPriceIsCurrent(
+  ctx: Context,
+  user: typeof users.$inferSelect,
+  checkout: typeof checkoutSessions.$inferSelect,
+) {
+  let verification;
+  try {
+    verification = await verifyVenteBotCheckoutPrice(checkout.id);
+  } catch (error) {
+    logger.warn({ err: error, checkoutId: checkout.id }, "Unable to reverify checkout price");
+    verification = {
+      verified: false,
+      supplierLinked: checkout.ventebotProductId !== null,
+      priceChanged: false,
+      oldUnitPriceUsd: (Number(checkout.priceUsd) / checkout.quantity).toFixed(2),
+      currentUnitPriceUsd: null,
+      expectedTotalUsd: null,
+      reason: "Supplier verification failed",
+    };
+  }
+  if (!verification.supplierLinked) return true;
+  if (!verification.verified) {
+    await cancelCheckoutSession(checkout.id, user.id);
+    await replaceCallbackMessage(ctx, t(languageOf(user), "supplierUnavailable"), {
+      reply_markup: new InlineKeyboard().text(t(languageOf(user), "backToShop"), "nav:shop"),
+    });
+    return false;
+  }
+  if (verification.priceChanged) {
+    await cancelCheckoutSession(checkout.id, user.id);
+    await showQuantitySelector(
+      ctx,
+      user,
+      checkout.productId,
+      checkout.quantity,
+      usdPriceCents(verification.oldUnitPriceUsd),
+    );
+    return false;
+  }
+  return true;
+}
+
+async function cancelCheckout(ctx: Context, user: typeof users.$inferSelect, checkoutId: string) {
+  const cancelled = await cancelCheckoutSession(checkoutId, user.id);
   await replaceCallbackMessage(
     ctx,
     cancelled[0]
@@ -2564,6 +2801,22 @@ async function payCheckoutWithWallet(
   user: typeof users.$inferSelect,
   checkoutId: string,
 ) {
+  const preflightRows = await db
+    .select()
+    .from(checkoutSessions)
+    .where(and(
+      eq(checkoutSessions.id, checkoutId),
+      eq(checkoutSessions.userId, user.id),
+      eq(checkoutSessions.status, "pending"),
+      gt(checkoutSessions.expiresAt, new Date()),
+    ))
+    .limit(1);
+  if (
+    preflightRows[0] &&
+    !(await ensureCheckoutPriceIsCurrent(ctx, user, preflightRows[0]))
+  ) {
+    return true;
+  }
   const result = await db.transaction(async (tx) => {
     // Serialize wallet purchases for this customer so two Telegram taps cannot
     // spend the same available balance.
@@ -2725,6 +2978,7 @@ async function showPayment(
     await payCheckoutWithWallet(ctx, user, checkoutId);
     return;
   }
+  if (!(await ensureCheckoutPriceIsCurrent(ctx, user, checkout[0]))) return;
   await db.update(checkoutSessions).set({ paymentMethod: method }).where(eq(checkoutSessions.id, checkoutId));
   const config = await db.select().from(paymentMethods).where(and(eq(paymentMethods.method, method), eq(paymentMethods.enabled, true))).limit(1);
   if (!config[0]) {
@@ -2797,6 +3051,45 @@ async function acceptPaymentReference(ctx: Context, user: typeof users.$inferSel
     await ctx.reply(t(languageOf(user), "error"));
     return true;
   }
+  if (checkout[0].ventebotProductId !== null) {
+    const verification = await verifyVenteBotCheckoutPrice(checkout[0].id);
+    if (!verification.verified || verification.priceChanged) {
+      const reason = verification.priceChanged
+        ? "The verified supplier resale price changed after payment instructions were created."
+        : `Supplier verification failed after payment was sent: ${verification.reason ?? "unknown supplier error"}`;
+      const flagged = await db.transaction(async (tx) => {
+        const claimed = await tx
+          .update(checkoutSessions)
+          .set({ status: "submitted", submittedAt: new Date(), updatedAt: new Date() })
+          .where(and(
+            eq(checkoutSessions.id, checkout[0].id),
+            eq(checkoutSessions.status, "pending"),
+            gt(checkoutSessions.expiresAt, new Date()),
+          ))
+          .returning({ id: checkoutSessions.id });
+        if (!claimed[0]) return false;
+        await tx.insert(payments).values({
+          checkoutSessionId: checkout[0].id,
+          userId: user.id,
+          paymentMethod: checkout[0].paymentMethod!,
+          usdAmount: checkout[0].priceUsd,
+          transactionReference: submittedReference,
+          status: "verification_failed",
+          verificationFailureReason: reason,
+          submittedAt: new Date(),
+        });
+        return true;
+      });
+      if (!flagged) {
+        await ctx.reply(t(languageOf(user), "error"));
+        return true;
+      }
+      await ctx.reply(t(languageOf(user), "supplierPaymentReview"), {
+        reply_markup: customerKeyboard(languageOf(user)),
+      });
+      return true;
+    }
+  }
   const submitted = await db.transaction(async (tx) => {
     const claimed = await tx.update(checkoutSessions)
       .set({ status: "submitted", submittedAt: new Date() })
@@ -2865,7 +3158,10 @@ export function buildTelegramBot() {
       if (await ensureAccess(ctx, user)) {
         if (startPayload.productId) await showProduct(ctx, user, startPayload.productId, true);
         else if (startPayload.openShop) await showShop(ctx, user, false, true);
-        else await showHome(ctx, user);
+        else {
+          await refreshSupplierCatalogForBuyer();
+          await showHome(ctx, user);
+        }
         await ctx.reply(t("en", "chooseLanguage"), {
           reply_markup: languageKeyboard(),
         });
@@ -2880,7 +3176,10 @@ export function buildTelegramBot() {
       await showShop(ctx, user);
       return;
     }
-    if (await ensureAccess(ctx, user)) await showHome(ctx, user);
+    if (await ensureAccess(ctx, user)) {
+      await refreshSupplierCatalogForBuyer();
+      await showHome(ctx, user);
+    }
   });
   bot.command("chatid", async (ctx) => {
     await ctx.reply(`Your Telegram chat ID is: ${ctx.chat.id}`);
@@ -3005,15 +3304,21 @@ export function buildTelegramBot() {
     }
     if (data === "quantity:noop") return;
     if (data.startsWith("quantity:")) {
-      const [, productId, action, rawQuantity] = data.split(":");
+      const [, productId, action, rawQuantity, rawPriceCents] = data.split(":");
       const currentQuantity = Number(rawQuantity || 1);
+      const expectedPriceCents = parseUsdPriceToken(
+        action === "custom" ? rawPriceCents ?? rawQuantity : rawPriceCents,
+      );
       if (action === "back") {
         customQuantityProducts.delete(user.id);
         await showProduct(ctx, user, productId);
         return;
       }
       if (action === "custom") {
-        customQuantityProducts.set(user.id, productId);
+        customQuantityProducts.set(user.id, {
+          productId,
+          expectedPriceCents,
+        });
         await replaceCallbackMessage(ctx, t(languageOf(user), "enterCustomQuantity"), {
           reply_markup: new InlineKeyboard().text(
             t(languageOf(user), "back"),
@@ -3023,19 +3328,43 @@ export function buildTelegramBot() {
         return;
       }
       if (action === "confirm") {
-        await beginCheckout(ctx, user, productId, currentQuantity);
+        await beginCheckout(
+          ctx,
+          user,
+          productId,
+          currentQuantity,
+          expectedPriceCents,
+        );
         return;
       }
       if (action === "set") {
-        await beginCheckout(ctx, user, productId, currentQuantity);
+        await beginCheckout(
+          ctx,
+          user,
+          productId,
+          currentQuantity,
+          expectedPriceCents,
+        );
         return;
       }
       if (action === "max") {
-        await showQuantitySelector(ctx, user, productId, 99);
+        await showQuantitySelector(
+          ctx,
+          user,
+          productId,
+          99,
+          expectedPriceCents,
+        );
         return;
       }
       if (action === "minus" || action === "plus") {
-        await showQuantitySelector(ctx, user, productId, currentQuantity + (action === "plus" ? 1 : -1));
+        await showQuantitySelector(
+          ctx,
+          user,
+          productId,
+          currentQuantity + (action === "plus" ? 1 : -1),
+          expectedPriceCents,
+        );
         return;
       }
     }
@@ -3048,7 +3377,15 @@ export function buildTelegramBot() {
       return;
     }
     if (data.startsWith("buy:")) {
-      await showQuantitySelector(ctx, user, data.slice("buy:".length));
+      const [, productId, rawPriceCents] = data.split(":");
+      const expectedPriceCents = parseUsdPriceToken(rawPriceCents);
+      await showQuantitySelector(
+        ctx,
+        user,
+        productId,
+        1,
+        expectedPriceCents,
+      );
       return;
     }
     if (data.startsWith("method:")) {
