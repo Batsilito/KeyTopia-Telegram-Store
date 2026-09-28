@@ -3,6 +3,8 @@ import { createHash, randomBytes } from "node:crypto";
 import {
   AdminLoginBody,
   CreateFlashSaleBody,
+  StopFlashSaleParams,
+  StopFlashSaleResponse,
   CreateProductBody,
   CreatePromoCodeBody,
   DeleteProductParams,
@@ -1520,6 +1522,69 @@ router.post("/flash-sales", async (req, res) => {
     status: rows[0].status,
     quantity: rows[0].quantity,
   });
+});
+
+router.post("/flash-sales/:id/stop", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!requireSuperAdmin(admin, res)) return;
+  const parsed = StopFlashSaleParams.safeParse(req.params);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid flash sale ID" });
+    return;
+  }
+
+  const stopped = await db
+    .update(flashSales)
+    .set({ status: "cancelled", updatedAt: new Date() })
+    .where(and(
+      eq(flashSales.id, parsed.data.id),
+      eq(flashSales.status, "active"),
+    ))
+    .returning();
+  if (!stopped[0]) {
+    const existing = await db
+      .select({ id: flashSales.id })
+      .from(flashSales)
+      .where(eq(flashSales.id, parsed.data.id))
+      .limit(1);
+    if (!existing[0]) {
+      res.status(404).json({ error: "Flash sale not found" });
+      return;
+    }
+    res.status(409).json({ error: "Only active flash sales can be stopped" });
+    return;
+  }
+
+  const rows = await db
+    .select({ sale: flashSales, product: products })
+    .from(flashSales)
+    .innerJoin(products, eq(flashSales.productId, products.id))
+    .where(eq(flashSales.id, stopped[0].id))
+    .limit(1);
+  const row = rows[0];
+  if (!row) {
+    res.status(404).json({ error: "Flash sale product not found" });
+    return;
+  }
+  res.json(StopFlashSaleResponse.parse({
+    id: row.sale.id,
+    productId: row.sale.productId,
+    productName: row.product.nameEn,
+    originalPriceUsd: numberValue(row.sale.originalPriceUsd),
+    salePriceUsd: numberValue(row.sale.salePriceUsd),
+    discountPercent: numberValue(row.sale.originalPriceUsd)
+      ? Math.round(
+          (1 -
+            numberValue(row.sale.salePriceUsd) /
+              numberValue(row.sale.originalPriceUsd)) *
+            100,
+        )
+      : 0,
+    startsAt: row.sale.startsAt.toISOString(),
+    endsAt: row.sale.endsAt.toISOString(),
+    status: row.sale.status,
+    quantity: row.sale.quantity,
+  }));
 });
 
 router.get("/promo-codes", async (req, res) => {

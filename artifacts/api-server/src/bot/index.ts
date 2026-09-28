@@ -779,13 +779,6 @@ export async function broadcastFlashSale(
   sale: typeof flashSales.$inferSelect,
   product: typeof products.$inferSelect,
 ) {
-  await broadcastToCustomers(
-    (language) => flashSaleMessage(sale, product, language, false),
-    (language) => createProductActionKeyboard(
-      language === "ar" ? "اشترِ الآن" : "Buy now",
-      "nav:shop",
-    ),
-  );
   await broadcastFlashSaleToChannel(sale, product, false);
 }
 

@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import {
-  useAdminLogin, useAdminLogout, useConfirmPayment, useCreateFlashSale, useCreateProduct, useDeleteProduct,
+  useAdminLogin, useAdminLogout, useConfirmPayment, useCreateFlashSale, useStopFlashSale, useCreateProduct, useDeleteProduct,
   useCreatePromoCode, useDeliverOrder, useDisableInventory, useGetAdminSession,
   useGetAnalyticsSummary, useGetDashboardOverview, useGetInventorySummary, useGetStoreSettings,
   useImportInventory, useListCustomers, useListFlashSales, useListInventory, useListOrders,
@@ -612,8 +612,237 @@ function Inventory() {
 }
 
 function FlashSales() {
-  const query = useListFlashSales(); const products = useListProducts({ page: 1, pageSize: 100, status: 'active' }); const create = useCreateFlashSale(); const [open, setOpen] = useState(false); const qc = useQueryClient(); const [form, setForm] = useState<any>({ productId: '', salePriceUsd: 0, startsAt: '', endsAt: '', quantity: '' }); const set = (key: string, value: any) => setForm((f: any) => ({ ...f, [key]: value }));
-  return <div className="animate-rise"><PageIntro eyebrow="Demand shaping" title="Flash sales" description="Schedule focused offers with a clear start, finish, and inventory guardrail." action={<Button onClick={() => setOpen(true)} data-testid="button-new-flash-sale"><Plus size={16} /> Schedule sale</Button>} /><Card>{query.isLoading ? <LoadingBlock /> : query.isError ? <ErrorState retry={() => query.refetch()} /> : query.data?.length ? <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-muted/55 text-[10px] uppercase tracking-[.12em] text-muted-foreground"><tr><th className="px-5 py-3">Product</th><th className="px-4 py-3">Offer</th><th className="px-4 py-3">Window</th><th className="px-4 py-3">Quantity</th><th className="px-5 py-3">Status</th></tr></thead><tbody className="divide-y divide-border">{query.data.map((sale: any) => <tr key={sale.id} data-testid={`row-flash-sale-${sale.id}`}><td className="px-5 py-4 font-bold">{sale.productName}</td><td className="px-4 py-4"><span className="font-mono font-bold">{money(sale.salePriceUsd)}</span><span className="ml-2 text-xs font-bold text-primary">-{sale.discountPercent}%</span><p className="mt-1 text-xs text-muted-foreground">was {money(sale.originalPriceUsd)}</p></td><td className="px-4 py-4 text-xs text-muted-foreground">{date(sale.startsAt)}<br />to {date(sale.endsAt)}</td><td className="px-4 py-4 font-mono text-xs">{sale.quantity ?? 'Unlimited'}</td><td className="px-5 py-4"><Badge tone={sale.status === 'active' ? 'green' : sale.status === 'scheduled' ? 'blue' : sale.status === 'expired' ? 'neutral' : 'orange'}>{sale.status}</Badge></td></tr>)}</tbody></table></div> : <EmptyState icon={Tag} title="No flash sales scheduled" body="Create a sale when you need a measured demand push." action={<Button onClick={() => setOpen(true)}><Plus size={15} /> Schedule sale</Button>} />}</Card>{open && <Modal title="Schedule flash sale" onClose={() => setOpen(false)}><div className="grid gap-4 md:grid-cols-2"><Field label="Product"><Select value={form.productId} onChange={(e) => set('productId', e.target.value)}><option value="">Choose a product</option>{products.data?.items.map((product: any) => <option key={product.id} value={product.id}>{product.nameEn}</option>)}</Select></Field><Field label="Sale price (USD)"><Input type="number" min="0" value={form.salePriceUsd} onChange={(e) => set('salePriceUsd', Number(e.target.value))} /></Field><Field label="Starts at"><Input type="datetime-local" value={form.startsAt} onChange={(e) => set('startsAt', e.target.value)} /></Field><Field label="Ends at"><Input type="datetime-local" value={form.endsAt} onChange={(e) => set('endsAt', e.target.value)} /></Field><Field label="Quantity cap" hint="Leave blank for unlimited"><Input type="number" min="1" value={form.quantity} onChange={(e) => set('quantity', e.target.value)} /></Field></div><div className="mt-5 flex justify-end gap-2"><Button variant="secondary" onClick={() => setOpen(false)}>Cancel</Button><Button disabled={!form.productId || !form.startsAt || !form.endsAt || create.isPending} onClick={() => create.mutate({ data: { productId: form.productId, salePriceUsd: Number(form.salePriceUsd), startsAt: new Date(form.startsAt).toISOString(), endsAt: new Date(form.endsAt).toISOString(), quantity: form.quantity ? Number(form.quantity) : null } }, { onSuccess: () => { setOpen(false); qc.invalidateQueries({ queryKey: getListFlashSalesQueryKey() }); } })} data-testid="button-save-flash-sale"><Check size={15} /> Schedule sale</Button></div></Modal>}</div>;
+  const query = useListFlashSales();
+  const products = useListProducts({ page: 1, pageSize: 100, status: 'active' });
+  const create = useCreateFlashSale();
+  const stop = useStopFlashSale();
+  const [open, setOpen] = useState(false);
+  const qc = useQueryClient();
+  const [form, setForm] = useState<any>({
+    productId: '',
+    salePriceUsd: 0,
+    startsAt: '',
+    endsAt: '',
+    quantity: '',
+  });
+  const set = (key: string, value: any) =>
+    setForm((f: any) => ({ ...f, [key]: value }));
+
+  return (
+    <div className="animate-rise">
+      <PageIntro
+        eyebrow="Demand shaping"
+        title="Flash sales"
+        description="Schedule focused offers with a clear start, finish, and inventory guardrail."
+        action={
+          <Button
+            onClick={() => setOpen(true)}
+            data-testid="button-new-flash-sale"
+          >
+            <Plus size={16} /> Schedule sale
+          </Button>
+        }
+      />
+      <Card>
+        {query.isLoading ? (
+          <LoadingBlock />
+        ) : query.isError ? (
+          <ErrorState retry={() => query.refetch()} />
+        ) : query.data?.length ? (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[900px] text-left text-sm">
+              <thead className="bg-muted/55 text-[10px] uppercase tracking-[.12em] text-muted-foreground">
+                <tr>
+                  <th className="px-5 py-3">Product</th>
+                  <th className="px-4 py-3">Offer</th>
+                  <th className="px-4 py-3">Window</th>
+                  <th className="px-4 py-3">Quantity</th>
+                  <th className="px-5 py-3">Status</th>
+                  <th className="px-5 py-3">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {query.data.map((sale: any) => (
+                  <tr key={sale.id} data-testid={`row-flash-sale-${sale.id}`}>
+                    <td className="px-5 py-4 font-bold">{sale.productName}</td>
+                    <td className="px-4 py-4">
+                      <span className="font-mono font-bold">
+                        {money(sale.salePriceUsd)}
+                      </span>
+                      <span className="ml-2 text-xs font-bold text-primary">
+                        -{sale.discountPercent}%
+                      </span>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        was {money(sale.originalPriceUsd)}
+                      </p>
+                    </td>
+                    <td className="px-4 py-4 text-xs text-muted-foreground">
+                      {date(sale.startsAt)}
+                      <br />
+                      to {date(sale.endsAt)}
+                    </td>
+                    <td className="px-4 py-4 font-mono text-xs">
+                      {sale.quantity ?? 'Unlimited'}
+                    </td>
+                    <td className="px-5 py-4">
+                      <Badge
+                        tone={
+                          sale.status === 'active'
+                            ? 'green'
+                            : sale.status === 'scheduled'
+                              ? 'blue'
+                              : sale.status === 'expired'
+                                ? 'neutral'
+                                : sale.status === 'cancelled'
+                                  ? 'red'
+                                  : 'orange'
+                        }
+                      >
+                        {sale.status}
+                      </Badge>
+                    </td>
+                    <td className="px-5 py-4">
+                      {sale.status === 'active' && (
+                        <Button
+                          variant="danger"
+                          disabled={stop.isPending}
+                          onClick={() => {
+                            if (
+                              !window.confirm(
+                                `Stop the flash sale for ${sale.productName}?`,
+                              )
+                            ) {
+                              return;
+                            }
+                            stop.mutate(
+                              { id: sale.id },
+                              {
+                                onSuccess: () => {
+                                  void Promise.all([
+                                    qc.invalidateQueries({
+                                      queryKey: getListFlashSalesQueryKey(),
+                                    }),
+                                    qc.invalidateQueries({
+                                      queryKey: getGetDashboardOverviewQueryKey(),
+                                    }),
+                                  ]);
+                                },
+                              },
+                            );
+                          }}
+                          data-testid={`button-stop-flash-sale-${sale.id}`}
+                        >
+                          <X size={14} />
+                          {stop.isPending ? 'Stopping…' : 'Stop sale'}
+                        </Button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <EmptyState
+            icon={Tag}
+            title="No flash sales scheduled"
+            body="Create a sale when you need a measured demand push."
+            action={
+              <Button onClick={() => setOpen(true)}>
+                <Plus size={15} /> Schedule sale
+              </Button>
+            }
+          />
+        )}
+      </Card>
+      {open && (
+        <Modal title="Schedule flash sale" onClose={() => setOpen(false)}>
+          <div className="grid gap-4 md:grid-cols-2">
+            <Field label="Product">
+              <Select
+                value={form.productId}
+                onChange={(e) => set('productId', e.target.value)}
+              >
+                <option value="">Choose a product</option>
+                {products.data?.items.map((product: any) => (
+                  <option key={product.id} value={product.id}>
+                    {product.nameEn}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Sale price (USD)">
+              <Input
+                type="number"
+                min="0"
+                value={form.salePriceUsd}
+                onChange={(e) => set('salePriceUsd', Number(e.target.value))}
+              />
+            </Field>
+            <Field label="Starts at">
+              <Input
+                type="datetime-local"
+                value={form.startsAt}
+                onChange={(e) => set('startsAt', e.target.value)}
+              />
+            </Field>
+            <Field label="Ends at">
+              <Input
+                type="datetime-local"
+                value={form.endsAt}
+                onChange={(e) => set('endsAt', e.target.value)}
+              />
+            </Field>
+            <Field label="Quantity cap" hint="Leave blank for unlimited">
+              <Input
+                type="number"
+                min="1"
+                value={form.quantity}
+                onChange={(e) => set('quantity', e.target.value)}
+              />
+            </Field>
+          </div>
+          <div className="mt-5 flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              disabled={
+                !form.productId ||
+                !form.startsAt ||
+                !form.endsAt ||
+                create.isPending
+              }
+              onClick={() =>
+                create.mutate(
+                  {
+                    data: {
+                      productId: form.productId,
+                      salePriceUsd: Number(form.salePriceUsd),
+                      startsAt: new Date(form.startsAt).toISOString(),
+                      endsAt: new Date(form.endsAt).toISOString(),
+                      quantity: form.quantity ? Number(form.quantity) : null,
+                    },
+                  },
+                  {
+                    onSuccess: () => {
+                      setOpen(false);
+                      void qc.invalidateQueries({
+                        queryKey: getListFlashSalesQueryKey(),
+                      });
+                    },
+                  },
+                )
+              }
+              data-testid="button-save-flash-sale"
+            >
+              <Check size={15} /> Schedule sale
+            </Button>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
 }
 
 function PromoCodes() {
