@@ -706,6 +706,8 @@ function VenteBot() {
   const [mappingProduct, setMappingProduct] = useState<any | null>(null);
   const [localProductId, setLocalProductId] = useState('');
   const [resalePriceText, setResalePriceText] = useState('');
+  const [resalePricingMode, setResalePricingMode] = useState<'manual' | 'fixed_markup'>('manual');
+  const [resaleMarkupText, setResaleMarkupText] = useState('');
   const [setupMode, setSetupMode] = useState<'existing' | 'new'>('existing');
   const [copyDescription, setCopyDescription] = useState(false);
   const [availabilityFilter, setAvailabilityFilter] = useState<'all' | 'available' | 'unavailable'>('all');
@@ -720,6 +722,8 @@ function VenteBot() {
     setMappingProduct(product);
     setLocalProductId(product.mappedProductId || '');
     setResalePriceText(product.resalePriceUsd == null ? '' : String(product.resalePriceUsd));
+    setResalePricingMode(product.resalePricingMode || 'manual');
+    setResaleMarkupText(product.resaleMarkupUsd == null ? '' : String(product.resaleMarkupUsd));
     setSetupMode('existing');
     setCopyDescription(false);
   };
@@ -729,25 +733,68 @@ function VenteBot() {
     setMappingProduct(null);
     setLocalProductId('');
     setResalePriceText('');
+    setResalePricingMode('manual');
+    setResaleMarkupText('');
     setSetupMode('existing');
     setCopyDescription(false);
   };
-  const isValidResalePrice = (value: string) => {
+  const usdToCents = (value: string | number) => {
+    if (typeof value === 'string' && value.trim().length === 0) return null;
     const parsed = Number(value);
-    return value.trim().length > 0
-      && Number.isFinite(parsed)
-      && parsed >= 0
-      && Math.abs(parsed * 100 - Math.round(parsed * 100)) < 1e-8;
+    if (!Number.isFinite(parsed) || parsed < 0) return null;
+    const cents = Math.round(parsed * 100);
+    return Math.abs(parsed * 100 - cents) < 1e-8 ? cents : null;
+  };
+  const maxUsdCents = 999_999_999_999;
+  const effectiveResaleCents = mappingProduct
+    ? resalePricingMode === 'manual'
+      ? usdToCents(resalePriceText)
+      : (() => {
+          const supplierCents = usdToCents(mappingProduct.priceUsd);
+          const markupCents = usdToCents(resaleMarkupText);
+          return supplierCents === null || markupCents === null
+            ? null
+            : supplierCents + markupCents;
+        })()
+    : null;
+  const isValidPricing = () =>
+    effectiveResaleCents !== null
+    && effectiveResaleCents <= maxUsdCents
+    && (resalePricingMode === 'manual' || effectiveResaleCents >= 0);
+  const pricingInput = () => resalePricingMode === 'manual'
+    ? {
+        resalePricingMode: 'manual' as const,
+        resalePriceUsd: Number(resalePriceText),
+        resaleMarkupUsd: null,
+      }
+    : {
+        resalePricingMode: 'fixed_markup' as const,
+        resalePriceUsd: null,
+        resaleMarkupUsd: Number(resaleMarkupText),
+      };
+  const handleExistingProductChange = (productId: string) => {
+    setLocalProductId(productId);
+    const product = (catalog.data?.localProducts ?? [])
+      .find((item: any) => item.id === productId);
+    if (!product) {
+      setResalePricingMode('manual');
+      setResalePriceText('');
+      setResaleMarkupText('');
+      return;
+    }
+    setResalePriceText(String(product.priceUsd));
+    setResalePricingMode(product.resalePricingMode || 'manual');
+    setResaleMarkupText(product.resaleMarkupUsd == null ? '' : String(product.resaleMarkupUsd));
   };
   const saveMapping = () => {
-    if (!mappingProduct || !isValidResalePrice(resalePriceText)) return;
-    const resalePriceUsd = Number(resalePriceText);
+    if (!mappingProduct || !isValidPricing()) return;
+    const priceSetting = pricingInput();
     if (setupMode === 'new') {
       createStoreProduct.mutate(
         {
           supplierProductId: mappingProduct.id,
           data: {
-            resalePriceUsd,
+            ...priceSetting,
             copyDescription,
             replaceMappedProductId: mappingProduct.mappedProductId,
           },
@@ -766,7 +813,7 @@ function VenteBot() {
     updateMapping.mutate(
       {
         supplierProductId: mappingProduct.id,
-        data: { productId: localProductId, resalePriceUsd, copyDescription },
+        data: { productId: localProductId, ...priceSetting, copyDescription },
       },
       { onSuccess: () => { invalidateVenteBot(); void queryClient.invalidateQueries({ queryKey: getListProductsQueryKey() }); closeMapping(); } },
     );
@@ -774,10 +821,26 @@ function VenteBot() {
   const unlinkMapping = () => {
     if (!mappingProduct) return;
     updateMapping.mutate(
-      { supplierProductId: mappingProduct.id, data: { productId: null, resalePriceUsd: null, copyDescription: false } },
+      {
+        supplierProductId: mappingProduct.id,
+        data: {
+          productId: null,
+          resalePricingMode: 'manual',
+          resalePriceUsd: null,
+          resaleMarkupUsd: null,
+          copyDescription: false,
+        },
+      },
       { onSuccess: () => { invalidateVenteBot(); void queryClient.invalidateQueries({ queryKey: getListProductsQueryKey() }); closeMapping(); } },
     );
   };
+  const supplierPriceCents = mappingProduct
+    ? usdToCents(mappingProduct.priceUsd)
+    : null;
+  const expectedMarginPreview = effectiveResaleCents === null
+      || supplierPriceCents === null
+    ? null
+    : (effectiveResaleCents - supplierPriceCents) / 100;
   const connection = catalog.data?.connection;
   const supplierProducts = catalog.data?.supplierProducts ?? [];
   const visibleSupplierProducts = useMemo(
@@ -823,7 +886,7 @@ function VenteBot() {
         <Button variant="secondary" onClick={() => testConnection.mutate(undefined, { onSuccess: invalidateVenteBot })} disabled={testConnection.isPending} data-testid="button-test-ventebot-connection">
           <ShieldCheck size={15} /> {testConnection.isPending ? 'Testing connection…' : 'Test connection'}
         </Button>
-        <Button onClick={() => refreshCatalog.mutate(undefined, { onSuccess: invalidateVenteBot })} disabled={refreshCatalog.isPending} data-testid="button-refresh-ventebot-catalog">
+        <Button onClick={() => refreshCatalog.mutate(undefined, { onSuccess: () => { invalidateVenteBot(); void queryClient.invalidateQueries({ queryKey: getListProductsQueryKey() }); } })} disabled={refreshCatalog.isPending} data-testid="button-refresh-ventebot-catalog">
           <RefreshCw size={15} /> {refreshCatalog.isPending ? 'Refreshing catalog…' : 'Refresh catalog'}
         </Button>
       </div>}
@@ -951,29 +1014,45 @@ function VenteBot() {
       </fieldset>
       <div className="mt-5 grid gap-4">
         {setupMode === 'existing' ? <Field label="KeyTopia product">
-          <Select value={localProductId} onChange={(event) => setLocalProductId(event.target.value)} data-testid={`select-ventebot-local-product-${mappingProduct.id}`}>
+          <Select value={localProductId} onChange={(event) => handleExistingProductChange(event.target.value)} data-testid={`select-ventebot-local-product-${mappingProduct.id}`}>
             <option value="">Choose an existing product</option>
             {localProducts.map((product: any) => <option key={product.id} value={product.id}>{product.nameEn} · {money(product.priceUsd)}{product.active ? '' : ' · inactive'}</option>)}
           </Select>
         </Field> : <p className="rounded-xl bg-muted/55 p-3 text-xs leading-5 text-muted-foreground">
           The new product uses the supplier name and image. It is active only when the supplier listing is available; unavailable listings are created inactive.
         </p>}
-        <Field label="Resale price (USD)" hint="Set the customer price. Margin is calculated against the current supplier price.">
-          <Input type="number" min="0" step="0.01" value={resalePriceText} onChange={(event) => setResalePriceText(event.target.value)} placeholder="e.g. 7.50" data-testid={`input-ventebot-resale-price-${mappingProduct.id}`} />
-        </Field>
+        <fieldset>
+          <legend className="text-xs font-bold uppercase tracking-[.1em] text-muted-foreground">Resale pricing</legend>
+          <div className="mt-2 grid gap-3 sm:grid-cols-2">
+            <label className={`flex cursor-pointer items-start gap-3 rounded-xl border p-4 ${resalePricingMode === 'manual' ? 'border-primary bg-primary/5' : 'border-border'}`}>
+              <input type="radio" name={`ventebot-pricing-${mappingProduct.id}`} value="manual" checked={resalePricingMode === 'manual'} onChange={() => setResalePricingMode('manual')} />
+              <span><span className="block text-sm font-bold">Manual resale price</span><span className="mt-1 block text-xs leading-5 text-muted-foreground">Keep the exact price you enter, even when the supplier price changes.</span></span>
+            </label>
+            <label className={`flex cursor-pointer items-start gap-3 rounded-xl border p-4 ${resalePricingMode === 'fixed_markup' ? 'border-primary bg-primary/5' : 'border-border'}`}>
+              <input type="radio" name={`ventebot-pricing-${mappingProduct.id}`} value="fixed_markup" checked={resalePricingMode === 'fixed_markup'} onChange={() => setResalePricingMode('fixed_markup')} />
+              <span><span className="block text-sm font-bold">Supplier price + fixed amount</span><span className="mt-1 block text-xs leading-5 text-muted-foreground">Recalculate the resale price after each catalog refresh.</span></span>
+            </label>
+          </div>
+        </fieldset>
+        {resalePricingMode === 'manual' ? <Field label="Manual resale price (USD)" hint="This saved amount does not change when the supplier price changes.">
+          <Input type="number" min="0" max="9999999999.99" step="0.01" value={resalePriceText} onChange={(event) => setResalePriceText(event.target.value)} placeholder="e.g. 7.50" data-testid={`input-ventebot-resale-price-${mappingProduct.id}`} />
+        </Field> : <Field label="Fixed amount above supplier price (USD)" hint="This amount is added to the seller API price on every successful catalog refresh.">
+          <Input type="number" min="0" max="9999999999.99" step="0.01" value={resaleMarkupText} onChange={(event) => setResaleMarkupText(event.target.value)} placeholder="e.g. 2.00" data-testid={`input-ventebot-resale-markup-${mappingProduct.id}`} />
+        </Field>}
         <label className="flex items-start gap-3 rounded-xl border border-border p-4">
           <input type="checkbox" checked={copyDescription} onChange={(event) => setCopyDescription(event.target.checked)} data-testid={`checkbox-ventebot-copy-description-${mappingProduct.id}`} />
           <span><span className="block text-sm font-bold">Copy seller description into English instructions</span><span className="mt-1 block text-xs leading-5 text-muted-foreground">{setupMode === 'existing' ? 'This replaces the existing English instructions; Arabic instructions stay unchanged.' : 'The supplier provides one description, so Arabic instructions stay blank.'}</span></span>
         </label>
-        <div className="grid grid-cols-2 gap-3 rounded-xl bg-muted/55 p-4">
+        <div className="grid gap-3 rounded-xl bg-muted/55 p-4 sm:grid-cols-3">
           <div><p className="text-[10px] font-bold uppercase tracking-[.08em] text-muted-foreground">Supplier price</p><p className="mt-1 font-mono font-bold">{money(mappingProduct.priceUsd)}</p></div>
-          <div><p className="text-[10px] font-bold uppercase tracking-[.08em] text-muted-foreground">Current margin</p><p className="mt-1 font-mono font-bold text-primary">{mappingProduct.expectedMarginUsd == null ? '—' : money(mappingProduct.expectedMarginUsd)}</p></div>
+          <div><p className="text-[10px] font-bold uppercase tracking-[.08em] text-muted-foreground">New resale price</p><p className="mt-1 font-mono font-bold">{effectiveResaleCents === null ? '—' : money(effectiveResaleCents / 100)}</p></div>
+          <div><p className="text-[10px] font-bold uppercase tracking-[.08em] text-muted-foreground">Expected margin</p><p className="mt-1 font-mono font-bold text-primary">{expectedMarginPreview === null ? '—' : money(expectedMarginPreview)}</p></div>
         </div>
       </div>
       {(updateMapping.isError || createStoreProduct.isError) && <p className="mt-4 rounded-lg bg-destructive/10 p-3 text-xs font-bold text-destructive" role="alert" data-testid="status-ventebot-mapping-error">{mappingSaveErrorMessage}</p>}
       <div className="mt-5 flex flex-wrap justify-between gap-2">
         <Button variant="quiet" className="text-destructive" disabled={!mappingProduct.mappedProductId || updateMapping.isPending || createStoreProduct.isPending} onClick={unlinkMapping} data-testid={`button-unlink-ventebot-product-${mappingProduct.id}`}><Unlink size={14} /> Unlink &amp; pause</Button>
-        <div className="flex gap-2"><Button variant="secondary" onClick={closeMapping}>Cancel</Button><Button disabled={(setupMode === 'existing' && !localProductId) || !isValidResalePrice(resalePriceText) || updateMapping.isPending || createStoreProduct.isPending} onClick={saveMapping} data-testid={`button-save-ventebot-mapping-${mappingProduct.id}`}><Check size={15} /> {setupMode === 'new' ? createStoreProduct.isPending ? 'Creating…' : 'Create store product' : updateMapping.isPending ? 'Saving…' : 'Save mapping'}</Button></div>
+        <div className="flex gap-2"><Button variant="secondary" onClick={closeMapping}>Cancel</Button><Button disabled={(setupMode === 'existing' && !localProductId) || !isValidPricing() || updateMapping.isPending || createStoreProduct.isPending} onClick={saveMapping} data-testid={`button-save-ventebot-mapping-${mappingProduct.id}`}><Check size={15} /> {setupMode === 'new' ? createStoreProduct.isPending ? 'Creating…' : 'Create store product' : updateMapping.isPending ? 'Saving…' : 'Save mapping'}</Button></div>
       </div>
     </Modal>}
   </div>;

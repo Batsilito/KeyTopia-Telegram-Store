@@ -19,17 +19,76 @@ export type VenteBotAvailabilityResult = {
     | null;
 };
 
+export type VenteBotResalePricingMode = "manual" | "fixed_markup";
+
+const MAX_USD_AMOUNT = 9_999_999_999.99;
+
+function isValidUsdAmount(value: number | null): value is number {
+  return (
+    value !== null &&
+    Number.isFinite(value) &&
+    value >= 0 &&
+    value <= MAX_USD_AMOUNT &&
+    Math.abs(value * 100 - Math.round(value * 100)) < 1e-8
+  );
+}
+
+export function isValidVenteBotResalePricingInput(
+  pricingMode: VenteBotResalePricingMode,
+  resalePriceUsd: number | null,
+  resaleMarkupUsd: number | null,
+): boolean {
+  if (pricingMode === "manual") {
+    return isValidUsdAmount(resalePriceUsd) && resaleMarkupUsd === null;
+  }
+  return resalePriceUsd === null && isValidUsdAmount(resaleMarkupUsd);
+}
+
 export function isValidVenteBotMappingInput(
   productId: string | null,
+  pricingMode: VenteBotResalePricingMode,
   resalePriceUsd: number | null,
+  resaleMarkupUsd: number | null,
 ): boolean {
-  if (productId === null) return resalePriceUsd === null;
+  if (productId === null) {
+    return (
+      pricingMode === "manual" &&
+      resalePriceUsd === null &&
+      resaleMarkupUsd === null
+    );
+  }
   return (
     productId.trim().length > 0 &&
-    resalePriceUsd !== null &&
-    Number.isFinite(resalePriceUsd) &&
-    resalePriceUsd >= 0
+    isValidVenteBotResalePricingInput(
+      pricingMode,
+      resalePriceUsd,
+      resaleMarkupUsd,
+    )
   );
+}
+
+function usdToCents(value: number | string): number {
+  const [whole, cents = "00"] = Number(value).toFixed(2).split(".");
+  return Number(whole) * 100 + Number(cents);
+}
+
+export function calculateVenteBotResalePrice(
+  supplierPriceUsd: number | string,
+  pricingMode: VenteBotResalePricingMode,
+  resalePriceUsd: number | null,
+  resaleMarkupUsd: number | null,
+): number | null {
+  if (pricingMode === "manual") return resalePriceUsd;
+  const supplierPrice = Number(supplierPriceUsd);
+  if (
+    !isValidUsdAmount(supplierPrice) ||
+    !isValidUsdAmount(resaleMarkupUsd)
+  ) {
+    return null;
+  }
+  const resalePrice =
+    (usdToCents(supplierPrice) + usdToCents(resaleMarkupUsd)) / 100;
+  return isValidUsdAmount(resalePrice) ? resalePrice : null;
 }
 
 export function getVenteBotAvailability(

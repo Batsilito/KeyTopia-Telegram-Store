@@ -1,5 +1,5 @@
 import { Router, type IRouter, type Request, type Response } from "express";
-import { asc, count, desc, eq, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, sql } from "drizzle-orm";
 import {
   CreateProductBody,
   CreateVenteBotStorefrontProductBody,
@@ -32,9 +32,11 @@ import {
   safeVenteBotErrorMessage,
 } from "../lib/ventebot-client";
 import {
+  calculateVenteBotResalePrice,
   expectedVenteBotMargin,
   getVenteBotAvailability,
   isValidVenteBotMappingInput,
+  isValidVenteBotResalePricingInput,
 } from "../lib/ventebot-rules";
 import { broadcastNewProduct, retryAndNotifyVenteBotOrder } from "../bot";
 
@@ -167,6 +169,8 @@ router.get("/ventebot/catalog", async (req, res): Promise<void> => {
         priceUsd: products.priceUsd,
         active: products.active,
         ventebotProductId: products.ventebotProductId,
+        resalePricingMode: products.resalePricingMode,
+        resaleMarkupUsd: products.resaleMarkupUsd,
       })
         .from(products)
         .orderBy(asc(products.nameEn)),
@@ -221,6 +225,10 @@ router.get("/ventebot/catalog", async (req, res): Promise<void> => {
         mappedProductId: product?.id ?? null,
         mappedProductName: product?.nameEn ?? null,
         resalePriceUsd,
+        resalePricingMode: product?.resalePricingMode ?? "manual",
+        resaleMarkupUsd: product?.resaleMarkupUsd == null
+          ? null
+          : Number(product.resaleMarkupUsd),
         expectedMarginUsd: expectedVenteBotMargin(
           resalePriceUsd,
           supplier.priceUsd,
@@ -231,6 +239,9 @@ router.get("/ventebot/catalog", async (req, res): Promise<void> => {
     localProducts: localRows.map((product) => ({
       ...product,
       priceUsd: Number(product.priceUsd),
+      resaleMarkupUsd: product.resaleMarkupUsd === null
+        ? null
+        : Number(product.resaleMarkupUsd),
     })),
   };
   res.json(GetVenteBotCatalogResponse.parse(response));
@@ -374,6 +385,65 @@ router.post("/ventebot/catalog/refresh", async (req, res): Promise<void> => {
             },
           });
       }
+      if (catalog.products.length) {
+        const supplierPriceById = new Map(
+          catalog.products.map((product) => [product.id, product.priceUsd]),
+        );
+        const fixedPricingProducts = await tx.select({
+          id: products.id,
+          supplierProductId: products.ventebotProductId,
+          priceUsd: products.priceUsd,
+          resaleMarkupUsd: products.resaleMarkupUsd,
+        })
+          .from(products)
+          .where(and(
+            eq(products.resalePricingMode, "fixed_markup"),
+            inArray(products.ventebotProductId, catalog.products.map(
+              (product) => product.id,
+            )),
+          ))
+          .for("update");
+        for (const product of fixedPricingProducts) {
+          const supplierProductId = product.supplierProductId;
+          const supplierPriceUsd = supplierProductId === null
+            ? undefined
+            : supplierPriceById.get(supplierProductId);
+          const resalePriceUsd = supplierPriceUsd === undefined ||
+              product.resaleMarkupUsd === null
+            ? null
+            : calculateVenteBotResalePrice(
+                supplierPriceUsd,
+                "fixed_markup",
+                null,
+                Number(product.resaleMarkupUsd),
+              );
+          if (
+            resalePriceUsd === null ||
+            !isValidVenteBotResalePricingInput(
+              "manual",
+              resalePriceUsd,
+              null,
+            )
+          ) {
+            await tx.update(products)
+              .set({ active: false, updatedAt: syncedAt })
+              .where(eq(products.id, product.id));
+            req.log.warn(
+              { productId: product.id, supplierProductId },
+              "Fixed-add-on price exceeds the supported range; product deactivated",
+            );
+            continue;
+          }
+          if (Number(product.priceUsd) !== resalePriceUsd) {
+            await tx.update(products)
+              .set({
+                priceUsd: resalePriceUsd.toFixed(2),
+                updatedAt: syncedAt,
+              })
+              .where(eq(products.id, product.id));
+          }
+        }
+      }
       await tx.insert(ventebotCatalogSyncState)
         .values({
           id: 1,
@@ -433,12 +503,19 @@ router.patch(
     const { supplierProductId } = params.data;
     const {
       productId,
+      resalePricingMode,
       resalePriceUsd,
+      resaleMarkupUsd,
       copyDescription = false,
     } = body.data;
-    if (!isValidVenteBotMappingInput(productId, resalePriceUsd)) {
+    if (!isValidVenteBotMappingInput(
+      productId,
+      resalePricingMode,
+      resalePriceUsd,
+      resaleMarkupUsd,
+    )) {
       res.status(400).json({
-        error: "Choose a KeyTopia product and resale price together, or clear both to unlink.",
+        error: "Choose a valid pricing mode and matching price or markup.",
       });
       return;
     }
@@ -458,6 +535,8 @@ router.patch(
         .set({
           ventebotProductId: null,
           active: false,
+          resalePricingMode: "manual",
+          resaleMarkupUsd: null,
           updatedAt: new Date(),
         })
         .where(eq(products.ventebotProductId, supplierProductId));
@@ -465,6 +544,8 @@ router.patch(
         supplierProductId,
         productId: null,
         resalePriceUsd: null,
+        resalePricingMode: "manual",
+        resaleMarkupUsd: null,
         expectedMarginUsd: null,
       }));
       return;
@@ -477,6 +558,25 @@ router.patch(
     const product = productRows[0];
     if (!product) {
       res.status(404).json({ error: "KeyTopia product was not found." });
+      return;
+    }
+    const effectiveResalePriceUsd = calculateVenteBotResalePrice(
+      supplierProduct.priceUsd,
+      resalePricingMode,
+      resalePriceUsd,
+      resaleMarkupUsd,
+    );
+    if (
+      effectiveResalePriceUsd === null ||
+      !isValidVenteBotResalePricingInput(
+        "manual",
+        effectiveResalePriceUsd,
+        null,
+      )
+    ) {
+      res.status(400).json({
+        error: "The calculated resale price is outside the supported range.",
+      });
       return;
     }
     try {
@@ -497,7 +597,11 @@ router.patch(
         const updatedRows = await tx.update(products)
           .set({
             ventebotProductId: supplierProductId,
-            priceUsd: resalePriceUsd!.toFixed(2),
+            priceUsd: effectiveResalePriceUsd.toFixed(2),
+            resalePricingMode,
+            resaleMarkupUsd: resalePricingMode === "fixed_markup"
+              ? resaleMarkupUsd!.toFixed(2)
+              : null,
             deliveryType: "automatic",
             stockType: "unlimited",
             ...(copyDescription
@@ -517,6 +621,10 @@ router.patch(
         supplierProductId,
         productId: updated.id,
         resalePriceUsd: Number(updated.priceUsd),
+        resalePricingMode: updated.resalePricingMode,
+        resaleMarkupUsd: updated.resaleMarkupUsd === null
+          ? null
+          : Number(updated.resaleMarkupUsd),
         expectedMarginUsd: expectedVenteBotMargin(
           updated.priceUsd,
           supplierProduct.priceUsd,
@@ -558,6 +666,41 @@ router.post(
       res.status(404).json({ error: "Supplier product was not found." });
       return;
     }
+    const {
+      resalePricingMode,
+      resalePriceUsd,
+      resaleMarkupUsd,
+      copyDescription,
+    } = body.data;
+    if (!isValidVenteBotResalePricingInput(
+      resalePricingMode,
+      resalePriceUsd,
+      resaleMarkupUsd,
+    )) {
+      res.status(400).json({
+        error: "Provide either a manual resale price or a fixed supplier-price markup.",
+      });
+      return;
+    }
+    const effectiveResalePriceUsd = calculateVenteBotResalePrice(
+      supplierProduct.priceUsd,
+      resalePricingMode,
+      resalePriceUsd,
+      resaleMarkupUsd,
+    );
+    if (
+      effectiveResalePriceUsd === null ||
+      !isValidVenteBotResalePricingInput(
+        "manual",
+        effectiveResalePriceUsd,
+        null,
+      )
+    ) {
+      res.status(400).json({
+        error: "The calculated resale price is outside the supported range.",
+      });
+      return;
+    }
     const supplierName = supplierProduct.name.trim();
     if (!supplierName) {
       res.status(400).json({
@@ -577,7 +720,7 @@ router.post(
       warranty: supplierProduct.warrantyDays > 0
         ? `${supplierProduct.warrantyDays} days`
         : "No warranty",
-      priceUsd: body.data.resalePriceUsd,
+      priceUsd: effectiveResalePriceUsd,
       deliveryType: "automatic",
       stockType: "unlimited",
       active: availability.available,
@@ -621,6 +764,10 @@ router.post(
           .values({
             ...candidate.data,
             priceUsd: candidate.data.priceUsd.toFixed(2),
+            resalePricingMode,
+            resaleMarkupUsd: resalePricingMode === "fixed_markup"
+              ? resaleMarkupUsd!.toFixed(2)
+              : null,
             ventebotProductId: supplierProductId,
           })
           .returning();
@@ -633,6 +780,8 @@ router.post(
           afterValues: {
             ...candidate.data,
             priceUsd: created.priceUsd,
+            resalePricingMode: created.resalePricingMode,
+            resaleMarkupUsd: created.resaleMarkupUsd,
             ventebotProductId: supplierProductId,
           },
         });
@@ -649,6 +798,10 @@ router.post(
         supplierProductId,
         productId: createdProduct.id,
         resalePriceUsd: Number(createdProduct.priceUsd),
+        resalePricingMode: createdProduct.resalePricingMode,
+        resaleMarkupUsd: createdProduct.resaleMarkupUsd === null
+          ? null
+          : Number(createdProduct.resaleMarkupUsd),
         expectedMarginUsd: expectedVenteBotMargin(
           createdProduct.priceUsd,
           supplierProduct.priceUsd,

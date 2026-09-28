@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  calculateVenteBotResalePrice,
   expectedVenteBotMargin,
   getVenteBotAvailability,
   isValidVenteBotMappingInput,
+  isValidVenteBotResalePricingInput,
   venteBotIdempotencyKey,
 } from "./ventebot-rules.ts";
 
@@ -70,12 +72,67 @@ test("resale margin is independently calculated from supplier cost", () => {
   assert.equal(expectedVenteBotMargin(null, 8), null);
 });
 
-test("supplier mapping requires both a local product and a resale price", () => {
-  assert.equal(isValidVenteBotMappingInput("local-product-1", 9.5), true);
-  assert.equal(isValidVenteBotMappingInput(null, null), true);
-  assert.equal(isValidVenteBotMappingInput("local-product-1", null), false);
-  assert.equal(isValidVenteBotMappingInput(null, 9.5), false);
-  assert.equal(isValidVenteBotMappingInput("local-product-1", -1), false);
+test("supplier mapping requires a valid product and pricing strategy", () => {
+  assert.equal(
+    isValidVenteBotMappingInput("local-product-1", "manual", 9.5, null),
+    true,
+  );
+  assert.equal(
+    isValidVenteBotMappingInput("local-product-1", "fixed_markup", null, 1.5),
+    true,
+  );
+  assert.equal(isValidVenteBotMappingInput(null, "manual", null, null), true);
+  assert.equal(
+    isValidVenteBotMappingInput("local-product-1", "manual", null, null),
+    false,
+  );
+  assert.equal(
+    isValidVenteBotMappingInput("local-product-1", "fixed_markup", 9.5, 1.5),
+    false,
+  );
+  assert.equal(
+    isValidVenteBotMappingInput(null, "manual", 9.5, null),
+    false,
+  );
+  assert.equal(
+    isValidVenteBotMappingInput("local-product-1", "manual", -1, null),
+    false,
+  );
+});
+
+test("fixed resale markup uses exact cents while manual pricing stays independent", () => {
+  assert.equal(
+    calculateVenteBotResalePrice("8.25", "fixed_markup", null, 1.75),
+    10,
+  );
+  assert.equal(
+    calculateVenteBotResalePrice("0.10", "fixed_markup", null, 0.2),
+    0.3,
+  );
+  assert.equal(
+    calculateVenteBotResalePrice("8.25", "manual", 9.5, null),
+    9.5,
+  );
+  assert.equal(
+    calculateVenteBotResalePrice("-0.01", "fixed_markup", null, 1),
+    null,
+  );
+  assert.equal(
+    calculateVenteBotResalePrice("9999999999.99", "fixed_markup", null, 0.01),
+    null,
+  );
+  assert.equal(
+    isValidVenteBotResalePricingInput("fixed_markup", null, 0),
+    true,
+  );
+  assert.equal(
+    isValidVenteBotResalePricingInput("fixed_markup", null, -0.01),
+    false,
+  );
+  assert.equal(
+    isValidVenteBotResalePricingInput("manual", 9.5, 1),
+    false,
+  );
 });
 
 test("the same KeyTopia order always gets the same provider idempotency key", () => {
