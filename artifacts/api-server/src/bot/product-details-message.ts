@@ -34,8 +34,8 @@ export function createProductDetailsMessage({
   const safeName = escapeHtml(name);
   const priceLine = `💰 <b>${t(language, "price")}:</b> ${escapeHtml(price)} USDT${flashSale ? " ⚡ Flash Sale" : ""}`;
   const stockState = inStock
-    ? t(language, "available").toLocaleLowerCase(language)
-    : t(language, "outOfStock").toLocaleLowerCase(language);
+    ? t(language, "available").toLowerCase()
+    : t(language, "outOfStock").toLowerCase();
   const stockLine = `📦 <b>${t(language, "stock")}:</b> ${escapeHtml(quantity)} ${stockState}`;
   const highlightedDetails = [
     `❤️ <b>${safeName}</b>`,

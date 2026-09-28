@@ -48,17 +48,17 @@ test("missing or malformed emoji IDs produce a normal product button", () => {
   }
 });
 
-test("finite stock and out-of-stock labels remain unchanged in both languages", () => {
+test("legacy Arabic preference still uses English product names and stock labels", () => {
   const finiteStockEn = createProductShopButton({
     ...baseProduct,
     quantity: "1",
   }, "en");
-  const finiteStock = createProductShopButton({
+  const finiteStockLegacy = createProductShopButton({
     ...baseProduct,
     quantity: "5",
     telegramCustomEmojiId: "5368324170671202286",
   }, "ar");
-  const outOfStock = createProductShopButton({
+  const outOfStockLegacy = createProductShopButton({
     ...baseProduct,
     quantity: "0",
     inStock: false,
@@ -73,11 +73,12 @@ test("finite stock and out-of-stock labels remain unchanged in both languages", 
   }, "en");
 
   assert.equal(finiteStockEn.text, "Canva | 1.00 USDT | 📦 1");
-  assert.equal(finiteStock.text, "كانفا | 1.00 USDT | 📦 5");
+  assert.equal(finiteStockLegacy.text, "Canva | 1.00 USDT | 📦 5");
   assert.equal(outOfStockEn.text, "Canva | 1.00 USDT | Out of stock");
-  assert.equal(outOfStock.text, "كانفا | 1.00 USDT | غير متوفر");
-  assert.equal(finiteStock.icon_custom_emoji_id, "5368324170671202286");
-  assert.equal(outOfStock.icon_custom_emoji_id, "5368324170671202286");
+  assert.equal(outOfStockLegacy.text, "Canva | 1.00 USDT | Out of stock");
+  assert.equal(finiteStockLegacy.icon_custom_emoji_id, "5368324170671202286");
+  assert.equal(outOfStockLegacy.icon_custom_emoji_id, "5368324170671202286");
+  assert.doesNotMatch(outOfStockLegacy.text, /[\u0600-\u06FF]/);
 });
 
 test("IDs must be numeric Telegram custom emoji identifiers", () => {

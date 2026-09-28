@@ -25,22 +25,23 @@ test("product title, price, stock and description render inside a Telegram quote
   assert.match(message, /<\/blockquote>$/);
 });
 
-test("product detail content is localized and dynamic HTML is escaped", () => {
+test("legacy Arabic preference still gets English labels and escaped product content", () => {
   const message = createProductDetailsMessage({
     language: "ar",
-    name: "منتج <مميز>",
+    name: "Special <Product>",
     price: "7.50",
     inStock: false,
     quantity: "0",
     flashSale: true,
-    description: "وصف & تفاصيل",
-    warranty: "ضمان",
-    duration: "30 يوماً",
+    description: "Description & details",
+    warranty: "Full warranty",
+    duration: "30 days",
   });
 
-  assert.match(message, /منتج &lt;مميز&gt;/);
-  assert.match(message, /<b>السعر:<\/b> 7\.50 USDT ⚡ Flash Sale/);
-  assert.match(message, /<b>المخزون:<\/b> 0/);
-  assert.match(message, /وصف &amp; تفاصيل/);
+  assert.match(message, /Special &lt;Product&gt;/);
+  assert.match(message, /<b>Price:<\/b> 7\.50 USDT ⚡ Flash Sale/);
+  assert.match(message, /<b>Stock:<\/b> 0 out of stock/);
+  assert.match(message, /Description &amp; details/);
   assert.match(message, /<blockquote>/);
+  assert.doesNotMatch(message, /[\u0600-\u06FF]/);
 });

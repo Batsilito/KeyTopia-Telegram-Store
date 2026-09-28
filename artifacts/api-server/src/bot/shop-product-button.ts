@@ -13,6 +13,7 @@ export interface ShopProductButtonInput {
   price: string;
   quantity: string;
   inStock: boolean;
+  /** Accepted for caller compatibility; English labels are always displayed. */
   outOfStockLabel: string;
   isFlashSale?: boolean;
   telegramCustomEmojiId?: string | null;
@@ -20,13 +21,13 @@ export interface ShopProductButtonInput {
 
 export function createProductShopButton(
   product: ShopProductButtonInput,
-  language: ShopProductLanguage,
+  _language: ShopProductLanguage,
   includeCustomEmoji = true,
 ) {
-  const name = language === "ar" ? product.nameAr : product.nameEn;
+  const name = product.nameEn;
   const stock = product.inStock
     ? `📦 ${product.quantity}`
-    : product.outOfStockLabel;
+    : "Out of stock";
   const iconId =
     includeCustomEmoji &&
     product.telegramCustomEmojiId &&

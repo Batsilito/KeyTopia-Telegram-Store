@@ -31,17 +31,18 @@ test("welcome message escapes user and store names before inserting them as HTML
   assert.doesNotMatch(message, /<Admin|<Topia>/);
 });
 
-test("Arabic welcome copy is localized and unconfigured details are omitted", () => {
+test("legacy Arabic preference still receives English welcome copy", () => {
   const message = createWelcomeMessage({
     language: "ar",
-    firstName: "سارة",
+    firstName: "Sara",
     storeName: "KeyTopia",
     supportAvailable: false,
   });
 
-  assert.match(message, /مرحباً بك في KeyTopia/);
-  assert.match(message, /أهلاً <b>سارة<\/b>/);
-  assert.match(message, /<b>المتجر<\/b>/);
+  assert.match(message, /Welcome to KeyTopia/);
+  assert.match(message, /Hey <b>Sara<\/b>/);
+  assert.match(message, /<b>Shop<\/b>/);
   assert.doesNotMatch(message, /https:\/\/t\.me/);
-  assert.doesNotMatch(message, /الدعم/);
+  assert.doesNotMatch(message, /Support/);
+  assert.doesNotMatch(message, /[\u0600-\u06FF]/);
 });

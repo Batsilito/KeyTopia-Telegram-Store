@@ -33,15 +33,17 @@ test("automatic delivery keeps its delivered status and escapes order content", 
   assert.match(message, /Secret &lt;value&gt;/);
 });
 
-test("manual delivery completion status is localized", () => {
+test("legacy Arabic preference still gets English delivery notifications", () => {
   const message = createOrderDeliveryMessage({
     language: "ar",
     deliveryType: "manual",
-    productName: "منتج",
+    productName: "Product",
     orderNumber: "KP-1043",
-    deliveryInfo: "التسليم جاهز",
+    deliveryInfo: "Delivery is ready",
   });
 
-  assert.match(message, /اكتمل طلبك/);
-  assert.match(message, /التسليم جاهز/);
+  assert.match(message, /Your order is completed/);
+  assert.match(message, /<b>Product:<\/b> Product/);
+  assert.match(message, /Delivery is ready/);
+  assert.doesNotMatch(message, /[\u0600-\u06FF]/);
 });

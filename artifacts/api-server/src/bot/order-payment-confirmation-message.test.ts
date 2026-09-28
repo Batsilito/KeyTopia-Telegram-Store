@@ -16,15 +16,16 @@ test("manual payment confirmation directs the customer to the admin with the ord
   );
 });
 
-test("manual payment confirmation is localized and escapes the order number", () => {
+test("legacy Arabic preference still gets English payment confirmation", () => {
   const message = createOrderPaymentConfirmationMessage({
     language: "ar",
     deliveryType: "manual",
     orderNumber: "KP<&1042",
   });
 
-  assert.match(message, /تم تأكيد الدفع للطلب اليدوي <code>KP&lt;&amp;1042<\/code>/);
+  assert.match(message, /Payment confirmed for manual order <code>KP&lt;&amp;1042<\/code>/);
   assert.match(message, /@keytopia_admin/);
+  assert.doesNotMatch(message, /[\u0600-\u06FF]/);
 });
 
 test("automatic payment confirmation keeps its existing processing message", () => {

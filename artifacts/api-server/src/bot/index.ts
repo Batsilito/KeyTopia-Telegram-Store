@@ -117,8 +117,8 @@ export async function validateTelegramCustomEmojiId(
   return id;
 }
 
-function languageOf(user: typeof users.$inferSelect): BotLanguage {
-  return user.language;
+function languageOf(_user: typeof users.$inferSelect): BotLanguage {
+  return "en";
 }
 
 function customerKeyboard(language: BotLanguage) {
@@ -245,18 +245,11 @@ function mainMenuKeyboard(language: BotLanguage) {
     .text(t(language, "deposit"))
     .row()
     .text(t(language, "orders"))
-    .text(t(language, "settings"))
     .row()
     .text(t(language, "support"))
     .row()
     .text(t(language, "refer"))
     .resized();
-}
-
-function languageKeyboard() {
-  return new InlineKeyboard()
-    .text("🇬🇧 English", "language:en")
-    .text("🇸🇦 العربية", "language:ar");
 }
 
 function paymentMethodLabel(method: string, language?: BotLanguage) {
@@ -613,19 +606,18 @@ export function broadcastProductRestocked(
 ) {
   return Promise.all([
     broadcastToCustomers(
-      (language) => {
-        const name = language === "ar" ? product.nameAr : product.nameEn;
+      () => {
         return [
-          `<b>${language === "ar" ? "🔔 تمت إعادة توفير المنتج" : "🔔 PRODUCT RESTOCKED"}</b>`,
+          "<b>🔔 PRODUCT RESTOCKED</b>",
           "",
-          `📦 <b>${language === "ar" ? "المنتج" : "Product"}:</b> ${escapeHtml(name)}`,
-          `➕ <b>${language === "ar" ? "تمت إضافة" : "Restocked"}:</b> ${restockedCount}`,
-          `📊 <b>${language === "ar" ? "المتاح الآن" : "Available now"}:</b> ${availableStock}`,
-          `💰 <b>${language === "ar" ? "السعر" : "Price"}:</b> ${product.priceUsd} USDT`,
+          `📦 <b>Product:</b> ${escapeHtml(product.nameEn)}`,
+          `➕ <b>Restocked:</b> ${restockedCount}`,
+          `📊 <b>Available now:</b> ${availableStock}`,
+          `💰 <b>Price:</b> ${product.priceUsd} USDT`,
         ].join("\n");
       },
-      (language) => createProductActionKeyboard(
-        language === "ar" ? "اشترِ الآن" : "Buy now",
+      () => createProductActionKeyboard(
+        "Buy now",
         `product:${product.id}`,
       ),
     ),
@@ -664,21 +656,18 @@ async function broadcastProductRestockedToChannel(
 
 export function broadcastNewProduct(product: typeof products.$inferSelect, availableStock = 0) {
   return broadcastToCustomers(
-    (language) => {
-      const name = language === "ar" ? product.nameAr : product.nameEn;
-      const stock = product.stockType === "unlimited"
-        ? language === "ar" ? "غير محدود" : "Unlimited"
-        : String(availableStock);
+    () => {
+      const stock = product.stockType === "unlimited" ? "Unlimited" : String(availableStock);
       return [
-        `<b>${language === "ar" ? "🆕 منتج جديد" : "🆕 NEW PRODUCT"}</b>`,
+        "<b>🆕 NEW PRODUCT</b>",
         "",
-        `📦 <b>${language === "ar" ? "المنتج" : "Product"}:</b> ${escapeHtml(name)}`,
-        `📊 <b>${language === "ar" ? "المتاح" : "Available"}:</b> ${stock}`,
-        `💰 <b>${language === "ar" ? "السعر" : "Price"}:</b> ${product.priceUsd} USDT`,
+        `📦 <b>Product:</b> ${escapeHtml(product.nameEn)}`,
+        `📊 <b>Available:</b> ${stock}`,
+        `💰 <b>Price:</b> ${product.priceUsd} USDT`,
       ].join("\n");
     },
-    (language) => createProductActionKeyboard(
-      language === "ar" ? "عرض المنتج" : "View product",
+    () => createProductActionKeyboard(
+      "View product",
       `product:${product.id}`,
     ),
   );
@@ -712,18 +701,11 @@ export async function broadcastProductPriceChange(
   }
 }
 
-function formatFlashSaleRemaining(endsAt: Date, language: BotLanguage, now = new Date()) {
+function formatFlashSaleRemaining(endsAt: Date, _language: BotLanguage, now = new Date()) {
   const totalMinutes = Math.max(1, Math.ceil(Math.max(0, endsAt.getTime() - now.getTime()) / 60_000));
   const days = Math.floor(totalMinutes / 1_440);
   const hours = Math.floor((totalMinutes % 1_440) / 60);
   const minutes = totalMinutes % 60;
-  if (language === "ar") {
-    const parts = [];
-    if (days) parts.push(`${days} يوم`);
-    if (hours) parts.push(`${hours} ساعة`);
-    if (minutes || parts.length === 0) parts.push(`${minutes} دقيقة`);
-    return parts.join(" و");
-  }
   const parts = [];
   if (days) parts.push(`${days}d`);
   if (hours) parts.push(`${hours}h`);
@@ -738,18 +720,16 @@ function flashSaleMessage(
   reminder: boolean,
   now = new Date(),
 ) {
-  const name = language === "ar" ? product.nameAr : product.nameEn;
   const heading = reminder
-    ? language === "ar" ? "⏰ العرض الخاطف ما زال مستمراً" : "⏰ FLASH SALE IS STILL ON"
-    : language === "ar" ? "🔥 عرض خاطف بدأ الآن" : "🔥 FLASH SALE STARTED";
-  const remainingLabel = language === "ar" ? "الوقت المتبقي" : "Time remaining";
+    ? "⏰ FLASH SALE IS STILL ON"
+    : "🔥 FLASH SALE STARTED";
   return [
     `<b>${heading}</b>`,
     "",
-    `📦 <b>${language === "ar" ? "المنتج" : "Product"}:</b> ${escapeHtml(name)}`,
-    `🏷️ <b>${language === "ar" ? "السعر السابق" : "Old price"}:</b> ${sale.originalPriceUsd} USDT`,
-    `💰 <b>${language === "ar" ? "سعر العرض" : "Sale price"}:</b> ${sale.salePriceUsd} USDT`,
-    `⏳ <b>${remainingLabel}:</b> ${formatFlashSaleRemaining(sale.endsAt, language, now)}`,
+    `📦 <b>Product:</b> ${escapeHtml(product.nameEn)}`,
+    `🏷️ <b>Old price:</b> ${sale.originalPriceUsd} USDT`,
+    `💰 <b>Sale price:</b> ${sale.salePriceUsd} USDT`,
+    `⏳ <b>Time remaining:</b> ${formatFlashSaleRemaining(sale.endsAt, language, now)}`,
   ].join("\n");
 }
 
@@ -787,9 +767,9 @@ export async function broadcastFlashSaleReminder(
   product: typeof products.$inferSelect,
 ) {
   await broadcastToCustomers(
-    (language) => flashSaleMessage(sale, product, language, true),
-    (language) => createProductActionKeyboard(
-      language === "ar" ? "اشترِ الآن" : "Buy now",
+    () => flashSaleMessage(sale, product, "en", true),
+    () => createProductActionKeyboard(
+      "Buy now",
       "nav:shop",
     ),
   );
@@ -1280,26 +1260,14 @@ async function notifyVerifiedReferralReward(
   );
 }
 
-function paymentMethodDescription(method: string, language: BotLanguage) {
-  const descriptions: Record<string, { en: string; ar: string }> = {
-    wallet: {
-      en: t("en", "walletPaymentDescription"),
-      ar: t("ar", "walletPaymentDescription"),
-    },
-    binance: {
-      en: "Send from your Binance UID to the recipient UID shown in the instructions. Your transfer is checked automatically.",
-      ar: "أرسل إلى رقم Binance UID الموضح في التعليمات. سيتم التحقق من التحويل تلقائياً.",
-    },
-    bybit: {
-      en: "Bybit transfer instructions are shown after you choose Bybit.",
-      ar: "تظهر تعليمات تحويل Bybit بعد اختيار Bybit.",
-    },
-    vodafone_cash: {
-      en: "Vodafone Cash transfer instructions are shown after you choose Vodafone Cash.",
-      ar: "تظهر تعليمات تحويل Vodafone Cash بعد اختيار Vodafone Cash.",
-    },
+function paymentMethodDescription(method: string, _language: BotLanguage) {
+  const descriptions: Record<string, string> = {
+    wallet: t("en", "walletPaymentDescription"),
+    binance: "Send from your Binance UID to the recipient UID shown in the instructions. Your transfer is checked automatically.",
+    bybit: "Bybit transfer instructions are shown after you choose Bybit.",
+    vodafone_cash: "Vodafone Cash transfer instructions are shown after you choose Vodafone Cash.",
   };
-  return descriptions[method]?.[language] ?? "";
+  return descriptions[method] ?? "";
 }
 
 type CheckoutPaymentMethod = "wallet" | "binance" | "bybit" | "vodafone_cash";
@@ -1550,7 +1518,6 @@ async function showProfile(ctx: Context, user: typeof users.$inferSelect) {
       "",
       `👤 <b>${t(language, "profileName")}:</b> ${escapeHtml(displayName)}`,
       `🔗 <b>${t(language, "profileUsername")}:</b> ${escapeHtml(username)}`,
-      `🌐 <b>${t(language, "profileLanguage")}:</b> ${language.toUpperCase()}`,
       `🎁 <b>${t(language, "profileReferral")}:</b> <code>${escapeHtml(user.referralCode)}</code>`,
     ].join("\n"),
     {
@@ -1598,7 +1565,7 @@ async function showWalletPaymentMethod(
     await ctx.reply(t(language, "paymentUnavailable"));
     return;
   }
-  const instructions = language === "ar" ? config[0].instructionsAr : config[0].instructionsEn;
+  const instructions = config[0].instructionsEn;
   const recipientUid = config[0].paymentIdentifier?.trim();
   const topUpAmount = amount !== undefined && Number.isInteger(amount)
     ? String(amount)
@@ -1804,12 +1771,9 @@ async function showSupport(ctx: Context, user: typeof users.$inferSelect) {
   });
 }
 
-function supportStatusLabel(status: "created" | "pending" | "closed", language: BotLanguage) {
-  const labels = {
-    en: { created: "Created", pending: "Pending", closed: "Closed" },
-    ar: { created: "جديدة", pending: "قيد المتابعة", closed: "مغلقة" },
-  } as const;
-  return labels[language][status];
+function supportStatusLabel(status: "created" | "pending" | "closed", _language: BotLanguage) {
+  const labels = { created: "Created", pending: "Pending", closed: "Closed" } as const;
+  return labels[status];
 }
 
 async function showSupportTickets(ctx: Context, user: typeof users.$inferSelect) {
@@ -2383,8 +2347,8 @@ async function showProduct(
       return;
     }
   }
-  const name = language === "ar" ? product.nameAr : product.nameEn;
-  const instructions = language === "ar" ? product.instructionsAr : product.instructionsEn;
+  const name = product.nameEn;
+  const instructions = product.instructionsEn;
   const availability = await getProductAvailability(product);
   const sale = await getActiveFlashSale(product.id);
   const price = effectiveProductPrice(product, sale);
@@ -2487,7 +2451,7 @@ async function showQuantitySelector(
   const quantity = Math.min(Math.max(Math.trunc(requestedQuantity), 1), maxQuantity);
   const total = (Number(price) * quantity).toFixed(2);
   const language = languageOf(user);
-  const name = language === "ar" ? product.nameAr : product.nameEn;
+  const name = product.nameEn;
   const keyboard = new InlineKeyboard();
   for (const preset of [1, 2, 3]) {
     if (preset > maxQuantity) break;
@@ -2687,7 +2651,7 @@ async function beginCheckout(
   keyboard
     .text(t(language, "cancelOrder"), `checkout:cancel:${checkout[0].id}`)
     .text(t(language, "support"), "nav:support");
-  const productName = language === "ar" ? product.nameAr : product.nameEn;
+  const productName = product.nameEn;
   const methodLines = [
     `• <b>${escapeHtml(paymentMethodLabel("wallet", language))}</b> ${escapeHtml(paymentMethodDescription("wallet", language))}`,
     ...methods.map((method) => `• <b>${escapeHtml(paymentMethodLabel(method.method, language))}</b> ${escapeHtml(paymentMethodDescription(method.method, language))}`),
@@ -2986,7 +2950,7 @@ async function showPayment(
     await replaceCallbackMessage(ctx, t(language, "paymentUnavailable"));
     return;
   }
-  const instructions = language === "ar" ? config[0].instructionsAr : config[0].instructionsEn;
+  const instructions = config[0].instructionsEn;
   const recipientUid = config[0].paymentIdentifier?.trim();
   const exactAmount = Number(checkout[0].priceUsd).toFixed(2);
   const details = method === "binance" && recipientUid
@@ -3163,9 +3127,6 @@ export function buildTelegramBot() {
           await refreshSupplierCatalogForBuyer();
           await showHome(ctx, user);
         }
-        await ctx.reply(t("en", "chooseLanguage"), {
-          reply_markup: languageKeyboard(),
-        });
       }
       return;
     }
@@ -3215,11 +3176,8 @@ export function buildTelegramBot() {
     const data = ctx.callbackQuery.data;
     await ctx.answerCallbackQuery();
     if (data.startsWith("language:")) {
-      const language = data.split(":")[1] as BotLanguage;
-      await db.update(users).set({ language, updatedAt: new Date() }).where(eq(users.id, user.id));
-      const updated = { ...user, language };
-      await ctx.reply(t(language, "languageUpdated"));
-      if (await ensureAccess(ctx, updated)) await showHome(ctx, updated);
+      await ctx.reply("The bot is available in English only.");
+      if (await ensureAccess(ctx, user)) await showHome(ctx, user);
       return;
     }
     if (data === "channel:recheck") {
@@ -3433,7 +3391,7 @@ export function buildTelegramBot() {
     else if (ctx.message.text === t(language, "orders")) await showOrders(ctx, user);
     else if (ctx.message.text === t(language, "support")) await showSupport(ctx, user);
     else if (ctx.message.text === t(language, "refer")) await showReferral(ctx, user);
-    else if (ctx.message.text === t(language, "settings")) await ctx.reply(t(language, "chooseLanguage"), { reply_markup: languageKeyboard() });
+    else if (ctx.message.text === "⚙️ Settings") await showHome(ctx, user);
     else if (ctx.message.text === t(language, "menu") || ctx.message.text === t(language, "home") || ctx.message.text === t(language, "mainMenu")) {
       await showHome(ctx, user);
     }
