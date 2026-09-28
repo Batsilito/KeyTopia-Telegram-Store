@@ -4,3 +4,4 @@
 - [Store schema database](neon-schema-migrations.md) — this app’s runtime schema is on Neon_Connection; the separate Replit database is not the store database.
 - [Binance SAPI runtime restriction](binance-sapi-runtime.md) — official Binance hosts return HTTP 451 from the current runtime; never auto-approve without verified history.
 - [VenteBot supplier fulfillment](ventebot-supplier-fulfillment.md) — use one idempotency key per order and deliver only after all provider items are confirmed.
+- [VenteBot catalog health](ventebot-catalog-health.md) — a successful reseller-account check does not prove the supplier catalog synced; validate catalog health separately.
