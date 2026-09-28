@@ -748,6 +748,7 @@ export interface AnalyticsSummary {
 
 export interface DashboardOverview {
   revenueTodayUsd: number;
+  realizedProfitTodayUsd: number;
   ordersToday: number;
   pendingPayments: number;
   awaitingDelivery: number;

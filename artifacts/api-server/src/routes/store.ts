@@ -217,12 +217,22 @@ router.post("/auth/logout", async (req, res) => {
 router.get("/dashboard/overview", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return res;
-  const [revenue, orderCount, pendingPayments, pendingTopUps, awaitingDelivery, tickets, lowStock, flashSaleCount, newCustomers] =
+  const [revenue, realizedProfit, orderCount, pendingPayments, pendingTopUps, awaitingDelivery, tickets, lowStock, flashSaleCount, newCustomers] =
     await Promise.all([
       db
         .select({ total: sum(orders.priceUsd) })
         .from(orders)
         .where(sql`${orders.createdAt} >= CURRENT_DATE AND ${orders.status} <> 'cancelled'`),
+      db
+        .select({
+          total: sql<string>`coalesce(sum(${orders.priceUsd} - ${orders.acquisitionCostUsd}), 0)`,
+        })
+        .from(orders)
+        .where(and(
+          sql`${orders.createdAt} >= CURRENT_DATE`,
+          eq(orders.status, "delivered"),
+          isNotNull(orders.acquisitionCostUsd),
+        )),
       db
         .select({ total: count() })
         .from(orders)
@@ -268,6 +278,7 @@ router.get("/dashboard/overview", async (req, res) => {
   const recentTickets = await listTicketRows(5);
   res.json({
     revenueTodayUsd: numberValue(revenue[0]?.total),
+    realizedProfitTodayUsd: numberValue(realizedProfit[0]?.total),
     ordersToday: Number(orderCount[0]?.total ?? 0),
     pendingPayments:
       Number(pendingPayments[0]?.total ?? 0) +

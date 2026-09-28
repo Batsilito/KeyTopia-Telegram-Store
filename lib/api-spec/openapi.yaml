@@ -1327,6 +1327,7 @@ components:
       type: object
       properties:
         revenueTodayUsd: { type: number }
+        realizedProfitTodayUsd: { type: number }
         ordersToday: { type: integer }
         pendingPayments: { type: integer }
         awaitingDelivery: { type: integer }
@@ -1343,7 +1344,7 @@ components:
         recentTickets:
           type: array
           items: { $ref: "#/components/schemas/SupportTicket" }
-      required: [revenueTodayUsd, ordersToday, pendingPayments, awaitingDelivery, openSupportTickets, lowStockProducts, activeFlashSales, newCustomers, recentOrders, recentPayments, recentTickets]
+      required: [revenueTodayUsd, realizedProfitTodayUsd, ordersToday, pendingPayments, awaitingDelivery, openSupportTickets, lowStockProducts, activeFlashSales, newCustomers, recentOrders, recentPayments, recentTickets]
     VenteBotCatalog:
       type: object
       properties:

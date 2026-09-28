@@ -150,7 +150,66 @@ function Overview() {
   if (query.isLoading) return <><PageIntro eyebrow="Daily pulse" title="Good morning, operator." description="Loading your live operational picture." /><LoadingBlock /></>;
   if (query.isError || !query.data) return <><PageIntro eyebrow="Daily pulse" title="Good morning, operator." description="Your control room is temporarily out of reach." /><Card><ErrorState retry={() => query.refetch()} /></Card></>;
   const d = { ...query.data, recentTickets: query.data.recentTickets as Array<{ status: string; [key: string]: any }> };
-  return <div className="animate-rise"><section className="relative isolate mb-7 min-h-[240px] overflow-hidden rounded-3xl border border-slate-700/60 bg-slate-950 shadow-xl"><img src="/keytopia-hero.png" alt="KeyTopia software subscriptions and digital tools" className="absolute inset-0 h-full w-full object-cover object-center" /><div className="absolute inset-0 bg-gradient-to-r from-slate-950/95 via-slate-950/60 to-slate-950/10" /><div className="relative flex min-h-[240px] max-w-xl flex-col justify-center p-7 text-white md:p-10"><p className="font-mono text-[10px] font-bold uppercase tracking-[.24em] text-cyan-200">KeyTopia Store</p><h2 className="mt-3 max-w-md text-3xl font-extrabold tracking-[-.04em] md:text-4xl">Unlock more possibilities.</h2><p className="mt-3 max-w-md text-sm leading-6 text-white/75">Software accounts, subscriptions, and digital tools — managed from one focused control room.</p></div></section><PageIntro eyebrow="Daily pulse" title="Good morning, operator." description="A clear view of what needs attention across KeyTopia today." action={<Button variant="secondary" onClick={() => query.refetch()} data-testid="button-refresh-overview"><RefreshCw size={15} /> Refresh board</Button>} /><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><StatCard label="Revenue today" value={money(d.revenueTodayUsd)} sub={<><ArrowUpRight size={13} className="text-primary" /> live gross volume</>} icon={CircleDollarSign} /><StatCard label="Orders today" value={d.ordersToday} sub="Orders created today" icon={ShoppingBag} tone="blue" /><StatCard label="Payment review" value={d.pendingPayments} sub="Waiting for confirmation" icon={Clock3} tone="orange" /><StatCard label="Awaiting delivery" value={d.awaitingDelivery} sub="Paid, not fulfilled" icon={Truck} tone="red" /></div><div className="mt-4 grid gap-4 xl:grid-cols-[1.25fr_.75fr]"><Card className="overflow-hidden"><div className="flex items-center justify-between border-b border-border px-5 py-4"><div><h3 className="font-extrabold">Recent orders</h3><p className="mt-1 text-xs text-muted-foreground">Latest storefront activity</p></div><Link href="/orders" className="text-xs font-extrabold text-primary hover:underline" data-testid="link-view-orders">View queue</Link></div>{d.recentOrders.length ? <div className="divide-y divide-border">{d.recentOrders.slice(0, 6).map((order) => <OrderRow key={order.id} order={order} />)}</div> : <EmptyState icon={ShoppingBag} title="No orders yet" body="New storefront orders will show up here." />}</Card><div className="grid gap-4"><Card className="p-5"><div className="flex items-center justify-between"><div><p className="text-xs font-bold uppercase tracking-[.08em] text-muted-foreground">Pressure points</p><h3 className="mt-2 text-xl font-extrabold">Queues to watch</h3></div><Gauge className="text-primary" size={21} /></div><div className="mt-5 grid gap-3"><QueueLink href="/support" label="Open support tickets" value={d.openSupportTickets} icon={Headphones} tone="orange" /><QueueLink href="/inventory" label="Low-stock products" value={d.lowStockProducts} icon={Boxes} tone="red" /><QueueLink href="/flash-sales" label="Active flash sales" value={d.activeFlashSales} icon={Tag} tone="green" /><QueueLink href="/customers" label="New customers" value={d.newCustomers} icon={Users} tone="blue" /></div></Card><Card><div className="border-b border-border px-5 py-4"><h3 className="font-extrabold">Payment review</h3><p className="mt-1 text-xs text-muted-foreground">Most recent submissions</p></div>{d.recentPayments.length ? <div className="divide-y divide-border">{d.recentPayments.slice(0, 4).map((payment) => <PaymentRow key={payment.id} payment={payment} compact />)}</div> : <EmptyState icon={CreditCard} title="No payment submissions" body="Payment reviews will appear here." />}</Card></div></div><Card className="mt-4"><div className="flex items-center justify-between border-b border-border px-5 py-4"><div><h3 className="font-extrabold">Support radar</h3><p className="mt-1 text-xs text-muted-foreground">Tickets with the latest customer touch</p></div><Link href="/support" className="text-xs font-extrabold text-primary hover:underline" data-testid="link-view-support">Open support</Link></div>{d.recentTickets.length ? <div className="grid divide-y divide-border md:grid-cols-3 md:divide-x md:divide-y-0">{d.recentTickets.slice(0, 3).map((ticket) => <div key={ticket.id} className="p-5"><div className="flex items-center justify-between"><Badge tone={ticket.status === 'open' ? 'orange' : 'neutral'}>{titleCase(ticket.status)}</Badge><span className="font-mono text-[10px] text-muted-foreground">{date(ticket.updatedAt)}</span></div><p className="mt-3 text-sm font-extrabold">{ticket.subject}</p><p className="mt-1 text-xs text-muted-foreground">{ticket.customerName} · {ticket.lastMessage}</p></div>)}</div> : <EmptyState icon={Headphones} title="No support activity" body="The support radar is quiet." />}</Card></div>;
+  return (
+    <div className="animate-rise">
+      <section className="relative isolate mb-7 min-h-[240px] overflow-hidden rounded-3xl border border-slate-700/60 bg-slate-950 shadow-xl">
+        <img src="/keytopia-hero.png" alt="KeyTopia software subscriptions and digital tools" className="absolute inset-0 h-full w-full object-cover object-center" />
+        <div className="absolute inset-0 bg-gradient-to-r from-slate-950/95 via-slate-950/60 to-slate-950/10" />
+        <div className="relative flex min-h-[240px] max-w-xl flex-col justify-center p-7 text-white md:p-10">
+          <p className="font-mono text-[10px] font-bold uppercase tracking-[.24em] text-cyan-200">KeyTopia Store</p>
+          <h2 className="mt-3 max-w-md text-3xl font-extrabold tracking-[-.04em] md:text-4xl">Unlock more possibilities.</h2>
+          <p className="mt-3 max-w-md text-sm leading-6 text-white/75">Software accounts, subscriptions, and digital tools — managed from one focused control room.</p>
+        </div>
+      </section>
+      <PageIntro
+        eyebrow="Daily pulse"
+        title="Good morning, operator."
+        description="A clear view of what needs attention across KeyTopia today."
+        action={<Button variant="secondary" onClick={() => query.refetch()} data-testid="button-refresh-overview"><RefreshCw size={15} /> Refresh board</Button>}
+      />
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        <StatCard label="Gross revenue today" value={money(d.revenueTodayUsd)} sub="Order value before tracked costs" icon={CircleDollarSign} />
+        <StatCard label="Net profit today" value={money(d.realizedProfitTodayUsd)} sub="Delivered sales minus tracked costs; fees excluded" icon={ArrowUpRight} tone="blue" />
+        <StatCard label="Orders today" value={d.ordersToday} sub="Orders created today" icon={ShoppingBag} tone="blue" />
+        <StatCard label="Payment review" value={d.pendingPayments} sub="Waiting for confirmation" icon={Clock3} tone="orange" />
+        <StatCard label="Awaiting delivery" value={d.awaitingDelivery} sub="Paid, not fulfilled" icon={Truck} tone="red" />
+      </div>
+      <div className="mt-4 grid gap-4 xl:grid-cols-[1.25fr_.75fr]">
+        <Card className="overflow-hidden">
+          <div className="flex items-center justify-between border-b border-border px-5 py-4">
+            <div><h3 className="font-extrabold">Recent orders</h3><p className="mt-1 text-xs text-muted-foreground">Latest storefront activity</p></div>
+            <Link href="/orders" className="text-xs font-extrabold text-primary hover:underline" data-testid="link-view-orders">View queue</Link>
+          </div>
+          {d.recentOrders.length ? <div className="divide-y divide-border">{d.recentOrders.slice(0, 6).map((order) => <OrderRow key={order.id} order={order} />)}</div> : <EmptyState icon={ShoppingBag} title="No orders yet" body="New storefront orders will show up here." />}
+        </Card>
+        <div className="grid gap-4">
+          <Card className="p-5">
+            <div className="flex items-center justify-between">
+              <div><p className="text-xs font-bold uppercase tracking-[.08em] text-muted-foreground">Pressure points</p><h3 className="mt-2 text-xl font-extrabold">Queues to watch</h3></div>
+              <Gauge className="text-primary" size={21} />
+            </div>
+            <div className="mt-5 grid gap-3">
+              <QueueLink href="/support" label="Open support tickets" value={d.openSupportTickets} icon={Headphones} tone="orange" />
+              <QueueLink href="/inventory" label="Low-stock products" value={d.lowStockProducts} icon={Boxes} tone="red" />
+              <QueueLink href="/flash-sales" label="Active flash sales" value={d.activeFlashSales} icon={Tag} tone="green" />
+              <QueueLink href="/customers" label="New customers" value={d.newCustomers} icon={Users} tone="blue" />
+            </div>
+          </Card>
+          <Card>
+            <div className="border-b border-border px-5 py-4"><h3 className="font-extrabold">Payment review</h3><p className="mt-1 text-xs text-muted-foreground">Most recent submissions</p></div>
+            {d.recentPayments.length ? <div className="divide-y divide-border">{d.recentPayments.slice(0, 4).map((payment) => <PaymentRow key={payment.id} payment={payment} compact />)}</div> : <EmptyState icon={CreditCard} title="No payment submissions" body="Payment reviews will appear here." />}
+          </Card>
+        </div>
+      </div>
+      <Card className="mt-4">
+        <div className="flex items-center justify-between border-b border-border px-5 py-4">
+          <div><h3 className="font-extrabold">Support radar</h3><p className="mt-1 text-xs text-muted-foreground">Tickets with the latest customer touch</p></div>
+          <Link href="/support" className="text-xs font-extrabold text-primary hover:underline" data-testid="link-view-support">Open support</Link>
+        </div>
+        {d.recentTickets.length ? <div className="grid divide-y divide-border md:grid-cols-3 md:divide-x md:divide-y-0">{d.recentTickets.slice(0, 3).map((ticket) => <div key={ticket.id} className="p-5"><div className="flex items-center justify-between"><Badge tone={ticket.status === 'open' ? 'orange' : 'neutral'}>{titleCase(ticket.status)}</Badge><span className="font-mono text-[10px] text-muted-foreground">{date(ticket.updatedAt)}</span></div><p className="mt-3 text-sm font-extrabold">{ticket.subject}</p><p className="mt-1 text-xs text-muted-foreground">{ticket.customerName} · {ticket.lastMessage}</p></div>)}</div> : <EmptyState icon={Headphones} title="No support activity" body="The support radar is quiet." />}
+      </Card>
+    </div>
+  );
 }
 
 function QueueLink({ href, label, value, icon: Icon, tone }: { href: string; label: string; value: number; icon: LucideIcon; tone: 'green' | 'orange' | 'red' | 'blue' }) { return <Link href={href} className="flex items-center justify-between rounded-xl border border-border bg-background/60 p-3 transition hover:border-primary/40 hover:bg-primary/5" data-testid={`link-queue-${label.toLowerCase().replaceAll(' ', '-')}`}><span className="flex items-center gap-3 text-sm font-bold"><span className={`rounded-lg p-2 ${tone === 'green' ? 'bg-primary/10 text-primary' : tone === 'orange' ? 'bg-accent/15 text-accent' : tone === 'red' ? 'bg-destructive/10 text-destructive' : 'bg-sky-500/10 text-sky-700'}`}><Icon size={16} /></span>{label}</span><strong className="font-mono text-lg">{value}</strong></Link>; }
@@ -600,21 +659,21 @@ function Analytics() {
     <PageIntro
       eyebrow="Business intelligence"
       title="Analytics"
-      description="Read performance in the same language as the operation: revenue, throughput, retention, and friction."
+      description="Read performance in the same language as the operation: gross sales, net profit, throughput, retention, and friction."
       action={<div className="flex gap-2"><Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="w-auto" data-testid="input-analytics-from" /><Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-auto" data-testid="input-analytics-to" /></div>}
     />
     {query.isLoading ? <LoadingBlock /> : query.isError || !query.data ? <Card><ErrorState retry={() => query.refetch()} /></Card> : <>
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        <StatCard label="Revenue" value={money(query.data.revenueUsd)} sub="Selected period" icon={CircleDollarSign} />
+        <StatCard label="Gross revenue" value={money(query.data.revenueUsd)} sub="Selected period" icon={CircleDollarSign} />
         <StatCard label="Tracked acquisition cost" value={money(query.data.acquisitionCostUsd)} sub={`${query.data.costedOrderCount} delivered orders with cost`} icon={Boxes} tone="orange" />
-        <StatCard label="Realized profit" value={money(query.data.realizedProfitUsd)} sub="Revenue minus recorded cost" icon={ArrowUpRight} tone="blue" />
+        <StatCard label="Net profit" value={money(query.data.realizedProfitUsd)} sub="Delivered sales minus tracked costs; fees excluded" icon={ArrowUpRight} tone="blue" />
         <StatCard label="Orders" value={query.data.orderCount} sub="Completed and active" icon={ShoppingBag} tone="blue" />
-        <StatCard label="Average order" value={money(query.data.averageOrderValueUsd)} sub="Per order" icon={ArrowUpRight} tone="orange" />
+        <StatCard label="Average gross order" value={money(query.data.averageOrderValueUsd)} sub="Gross revenue per order" icon={ArrowUpRight} tone="orange" />
         <StatCard label="New customers" value={query.data.newCustomers} sub={`${query.data.returningCustomers} returning`} icon={Users} />
       </div>
       <div className="mt-4 grid gap-4 xl:grid-cols-2">
-        <MetricList title="Revenue by payment method" items={query.data.revenueByPaymentMethod} format={money} icon={CreditCard} />
-        <MetricList title="Top products" items={query.data.topProducts} format={money} icon={Package} />
+        <MetricList title="Gross revenue by payment method" items={query.data.revenueByPaymentMethod} format={money} icon={CreditCard} />
+        <MetricList title="Top products by gross sales" items={query.data.topProducts} format={money} icon={Package} />
         <Card className="p-5">
           <div className="flex items-center justify-between"><div><p className="text-xs font-bold uppercase tracking-[.08em] text-muted-foreground">Customer loop</p><h3 className="mt-1 text-lg font-extrabold">Retention signals</h3></div><Activity size={19} className="text-primary" /></div>
           <div className="mt-5 grid grid-cols-2 gap-3"><MiniMetric label="Returning customers" value={query.data.returningCustomers} /><MiniMetric label="Cashback issued" value={money(query.data.cashbackIssuedUsd)} /><MiniMetric label="Referral rewards" value={money(query.data.referralRewardsIssuedUsd)} /><MiniMetric label="Cancelled orders" value={query.data.cancelledOrders} /></div>

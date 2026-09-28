@@ -82,6 +82,7 @@ export const AdminLogoutResponse = zod.void()
  */
 export const GetDashboardOverviewResponse = zod.object({
   "revenueTodayUsd": zod.number(),
+  "realizedProfitTodayUsd": zod.number(),
   "ordersToday": zod.number().int(),
   "pendingPayments": zod.number().int(),
   "awaitingDelivery": zod.number().int(),

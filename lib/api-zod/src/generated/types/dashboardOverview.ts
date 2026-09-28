@@ -11,6 +11,7 @@ import type { SupportTicket } from './supportTicket';
 
 export interface DashboardOverview {
   revenueTodayUsd: number;
+  realizedProfitTodayUsd: number;
   ordersToday: number;
   pendingPayments: number;
   awaitingDelivery: number;
