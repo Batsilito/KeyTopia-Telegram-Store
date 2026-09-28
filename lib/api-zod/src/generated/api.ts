@@ -1067,3 +1067,140 @@ export const GetAnalyticsSummaryResponse = zod.object({
 })
 
 
+/**
+ * @summary Get VenteBot connection status and synchronized supplier catalog
+ */
+export const GetVenteBotCatalogResponse = zod.object({
+  "connection": zod.object({
+  "apiKeyConfigured": zod.boolean(),
+  "status": zod.enum(['not_configured', 'untested', 'connected', 'error']),
+  "lastConnectionCheckAt": zod.coerce.date().nullable(),
+  "lastConnectionError": zod.string().nullable(),
+  "walletBalanceUsd": zod.number().nullable(),
+  "lastSyncedAt": zod.coerce.date().nullable(),
+  "activeSupplierProductCount": zod.number().int(),
+  "failedFulfillmentCount": zod.number().int()
+}),
+  "supplierProducts": zod.array(zod.object({
+  "id": zod.number().int(),
+  "name": zod.string(),
+  "description": zod.string(),
+  "emoji": zod.string().nullable(),
+  "imageUrl": zod.string().nullable(),
+  "priceUsd": zod.number(),
+  "standardPriceUsd": zod.number().nullable(),
+  "pricingType": zod.string(),
+  "specialPriceExpiresAt": zod.string().nullable(),
+  "warrantyDays": zod.number().int(),
+  "deliveryType": zod.string(),
+  "stock": zod.number().int().nullable(),
+  "apiTest": zod.boolean(),
+  "catalogActive": zod.boolean(),
+  "lastSyncedAt": zod.coerce.date(),
+  "mappedProductId": zod.string().uuid().nullable(),
+  "mappedProductName": zod.string().nullable(),
+  "resalePriceUsd": zod.number().nullable(),
+  "expectedMarginUsd": zod.number().nullable(),
+  "availability": zod.object({
+  "available": zod.boolean(),
+  "quantity": zod.number().int().nullable(),
+  "reason": zod.union([zod.literal('not_configured'),zod.literal('inactive'),zod.literal('test_product'),zod.literal('activation_required'),zod.literal('unsupported_delivery'),zod.literal('stock_unknown'),zod.literal('out_of_stock'),zod.literal(null)]).nullable()
+})
+})),
+  "localProducts": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "nameEn": zod.string(),
+  "priceUsd": zod.number(),
+  "active": zod.boolean(),
+  "ventebotProductId": zod.number().int().nullable()
+}))
+})
+
+
+/**
+ * @summary Verify the configured VenteBot reseller key
+ */
+export const TestVenteBotConnectionResponse = zod.object({
+  "connected": zod.boolean(),
+  "checkedAt": zod.coerce.date(),
+  "walletBalanceUsd": zod.number().nullable(),
+  "message": zod.string()
+})
+
+
+/**
+ * @summary Refresh the VenteBot catalog using ETag validation
+ */
+export const RefreshVenteBotCatalogResponse = zod.object({
+  "notModified": zod.boolean(),
+  "lastSyncedAt": zod.coerce.date().nullable(),
+  "supplierProductCount": zod.number().int()
+})
+
+
+/**
+ * @summary Map a supplier item to a KeyTopia product and set its resale price
+ */
+
+
+
+export const UpdateVenteBotMappingParams = zod.object({
+  "supplierProductId": zod.coerce.number().int().min(1)
+})
+
+export const updateVenteBotMappingBodyResalePriceUsdMin = 0;
+export const updateVenteBotMappingBodyResalePriceUsdMax = 9999999999.99;
+export const updateVenteBotMappingBodyResalePriceUsdMultipleOf = 0.01;
+
+
+
+export const UpdateVenteBotMappingBody = zod.object({
+  "productId": zod.string().uuid().nullable(),
+  "resalePriceUsd": zod.number().min(updateVenteBotMappingBodyResalePriceUsdMin).max(updateVenteBotMappingBodyResalePriceUsdMax).multipleOf(updateVenteBotMappingBodyResalePriceUsdMultipleOf).nullable()
+})
+
+export const UpdateVenteBotMappingResponse = zod.object({
+  "supplierProductId": zod.number().int(),
+  "productId": zod.string().uuid().nullable(),
+  "resalePriceUsd": zod.number().nullable(),
+  "expectedMarginUsd": zod.number().nullable()
+})
+
+
+/**
+ * @summary List supplier fulfillment status for customer orders
+ */
+export const ListVenteBotOrdersResponse = zod.object({
+  "items": zod.array(zod.object({
+  "orderId": zod.string().uuid(),
+  "orderNumber": zod.string(),
+  "customerName": zod.string(),
+  "productName": zod.string(),
+  "supplierProductId": zod.number().int(),
+  "providerOrderId": zod.number().int().nullable(),
+  "providerStatus": zod.string().nullable(),
+  "status": zod.enum(['pending', 'submitting', 'awaiting_delivery', 'completed', 'failed']),
+  "priceUsd": zod.number(),
+  "acquisitionCostUsd": zod.number().nullable(),
+  "attempts": zod.number().int(),
+  "lastError": zod.string().nullable(),
+  "nextAttemptAt": zod.coerce.date().nullable(),
+  "createdAt": zod.coerce.date(),
+  "canRetry": zod.boolean()
+}))
+})
+
+
+/**
+ * @summary Retry a failed supplier fulfillment
+ */
+export const RetryVenteBotOrderParams = zod.object({
+  "orderId": zod.coerce.string().uuid()
+})
+
+export const RetryVenteBotOrderResponse = zod.object({
+  "status": zod.string(),
+  "orderStatus": zod.string().nullable()
+})
+
+

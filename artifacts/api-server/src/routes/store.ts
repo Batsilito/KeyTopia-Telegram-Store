@@ -55,6 +55,7 @@ import {
   supportTickets,
   telegramPaymentNotifications,
   users,
+  ventebotOrderFulfillments,
   walletTopUps,
 } from "@workspace/db";
 import {
@@ -89,6 +90,7 @@ import {
   testBinanceApiConnectivity,
   upsertTelegramPaymentNotification,
 } from "../lib/binance-topups";
+import { createVenteBotFulfillmentValues } from "../lib/ventebot-fulfillment";
 
 const router: IRouter = Router();
 
@@ -388,21 +390,43 @@ router.patch("/products/:productId", async (req, res) => {
   if (parsed.data.instructionsAr !== undefined) updateData.instructionsAr = parsed.data.instructionsAr;
   const updatedProduct = await db.transaction(async (tx) => {
     const existing = await tx
-      .select({ priceUsd: products.priceUsd })
+      .select({
+        priceUsd: products.priceUsd,
+        ventebotProductId: products.ventebotProductId,
+      })
       .from(products)
       .where(eq(products.id, req.params.productId))
       .for("update");
-    if (!existing[0]) return null;
+    if (!existing[0]) return { kind: "missing" as const };
+    if (
+      existing[0].ventebotProductId !== null &&
+      (
+        parsed.data.deliveryType === "manual" ||
+        parsed.data.stockType === "limited"
+      )
+    ) {
+      return { kind: "supplier_settings" as const };
+    }
     const rows = await tx
       .update(products)
       .set(updateData)
       .where(eq(products.id, req.params.productId))
       .returning();
-    if (!rows[0]) return null;
-    return { product: rows[0], previousPriceUsd: existing[0].priceUsd };
+    if (!rows[0]) return { kind: "missing" as const };
+    return {
+      kind: "updated" as const,
+      product: rows[0],
+      previousPriceUsd: existing[0].priceUsd,
+    };
   });
-  if (!updatedProduct) {
+  if (updatedProduct.kind === "missing") {
     res.status(404).json({ error: "Product not found" });
+    return;
+  }
+  if (updatedProduct.kind === "supplier_settings") {
+    res.status(409).json({
+      error: "Supplier-mapped products must stay automatic with unlimited local stock.",
+    });
     return;
   }
   const { product, previousPriceUsd } = updatedProduct;
@@ -1108,6 +1132,7 @@ router.post("/payments/:paymentId/confirm", async (req, res) => {
         checkout: checkoutSessions,
         deliveryType: products.deliveryType,
         stockType: products.stockType,
+        ventebotProductId: checkoutSessions.ventebotProductId,
       })
       .from(checkoutSessions)
       .innerJoin(products, eq(checkoutSessions.productId, products.id))
@@ -1139,6 +1164,7 @@ router.post("/payments/:paymentId/confirm", async (req, res) => {
         orderNumber: checkout.checkout.reference,
         userId: payment.userId,
         productId: checkout.checkout.productId,
+        ventebotProductId: checkout.ventebotProductId,
         checkoutSessionId: checkout.checkout.id,
         productNameSnapshot: checkout.checkout.productNameSnapshot,
         durationSnapshot: checkout.checkout.durationSnapshot,
@@ -1155,6 +1181,15 @@ router.post("/payments/:paymentId/confirm", async (req, res) => {
       .returning();
     const order = orderRows[0];
     if (!order) throw new Error("Unable to create paid order");
+    if (checkout.ventebotProductId !== null) {
+      await tx
+        .insert(ventebotOrderFulfillments)
+        .values(createVenteBotFulfillmentValues(
+          order.id,
+          checkout.ventebotProductId,
+        ))
+        .onConflictDoNothing();
+    }
 
     await tx
       .update(payments)

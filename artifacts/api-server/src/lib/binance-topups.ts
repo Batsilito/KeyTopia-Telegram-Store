@@ -10,10 +10,12 @@ import {
   products,
   telegramPaymentNotifications,
   users,
+  ventebotOrderFulfillments,
   walletTopUps,
   walletTransactions,
 } from "@workspace/db";
 import { logger } from "./logger";
+import { createVenteBotFulfillmentValues } from "./ventebot-fulfillment";
 import {
   BINANCE_VERIFICATION_GRACE_MS,
   evaluateBinancePayment,
@@ -514,6 +516,7 @@ async function confirmProductPayment(
         orderNumber: checkout.checkout.reference,
         userId: payment.userId,
         productId: checkout.checkout.productId,
+        ventebotProductId: checkout.checkout.ventebotProductId,
         checkoutSessionId: checkout.checkout.id,
         productNameSnapshot: checkout.checkout.productNameSnapshot,
         durationSnapshot: checkout.checkout.durationSnapshot,
@@ -530,6 +533,15 @@ async function confirmProductPayment(
       .returning();
     const order = orderRows[0];
     if (!order) throw new Error("Unable to create paid order");
+    if (checkout.checkout.ventebotProductId !== null) {
+      await tx
+        .insert(ventebotOrderFulfillments)
+        .values(createVenteBotFulfillmentValues(
+          order.id,
+          checkout.checkout.ventebotProductId,
+        ))
+        .onConflictDoNothing();
+    }
 
     await tx
       .update(payments)

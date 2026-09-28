@@ -67,7 +67,14 @@ import type {
   SupportTicketConversation,
   SupportTicketPage,
   SupportTicketUpdate,
-  TelegramTestNotificationResponse
+  TelegramTestNotificationResponse,
+  VenteBotCatalog,
+  VenteBotCatalogRefresh,
+  VenteBotConnectionTest,
+  VenteBotMappingInput,
+  VenteBotMappingResult,
+  VenteBotOrderPage,
+  VenteBotRetryResult
 } from './api.schemas';
 
 import { customFetch } from '../custom-fetch';
@@ -3217,4 +3224,469 @@ export function useGetAnalyticsSummary<TData = Awaited<ReturnType<typeof getAnal
 
 
 
+
+export const getGetVenteBotCatalogUrl = () => {
+
+
+
+
+  return `/api/ventebot/catalog`
+}
+
+/**
+ * @summary Get VenteBot connection status and synchronized supplier catalog
+ */
+export const getVenteBotCatalog = async ( options?: Parameters<typeof customFetch>[1]): Promise<VenteBotCatalog> => {
+
+  return customFetch<VenteBotCatalog>(getGetVenteBotCatalogUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetVenteBotCatalogQueryKey = () => {
+    return [
+    `/api/ventebot/catalog`
+    ] as const;
+    }
+
+
+export const getGetVenteBotCatalogQueryOptions = <TData = Awaited<ReturnType<typeof getVenteBotCatalog>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getVenteBotCatalog>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetVenteBotCatalogQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getVenteBotCatalog>>> = ({ signal }) => getVenteBotCatalog({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getVenteBotCatalog>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetVenteBotCatalogQueryResult = NonNullable<Awaited<ReturnType<typeof getVenteBotCatalog>>>
+export type GetVenteBotCatalogQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get VenteBot connection status and synchronized supplier catalog
+ */
+
+export function useGetVenteBotCatalog<TData = Awaited<ReturnType<typeof getVenteBotCatalog>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getVenteBotCatalog>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetVenteBotCatalogQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getTestVenteBotConnectionUrl = () => {
+
+
+
+
+  return `/api/ventebot/test`
+}
+
+/**
+ * @summary Verify the configured VenteBot reseller key
+ */
+export const testVenteBotConnection = async ( options?: Parameters<typeof customFetch>[1]): Promise<VenteBotConnectionTest> => {
+
+  return customFetch<VenteBotConnectionTest>(getTestVenteBotConnectionUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getTestVenteBotConnectionMutationKey = () => ['testVenteBotConnection'] as const;
+
+export const getTestVenteBotConnectionMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof testVenteBotConnection>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof testVenteBotConnection>>, TError,void, TContext> => {
+
+const mutationKey = getTestVenteBotConnectionMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof testVenteBotConnection>>, void> = () => {
+
+
+          return  testVenteBotConnection(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type TestVenteBotConnectionMutationResult = NonNullable<Awaited<ReturnType<typeof testVenteBotConnection>>>
+
+    export type TestVenteBotConnectionMutationError = ErrorType<unknown>
+
+
+    /**
+ * @summary Verify the configured VenteBot reseller key
+ */
+export const useTestVenteBotConnection = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof testVenteBotConnection>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof testVenteBotConnection>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getTestVenteBotConnectionMutationOptions(options));
+    }
+
+export const getRefreshVenteBotCatalogUrl = () => {
+
+
+
+
+  return `/api/ventebot/catalog/refresh`
+}
+
+/**
+ * @summary Refresh the VenteBot catalog using ETag validation
+ */
+export const refreshVenteBotCatalog = async ( options?: Parameters<typeof customFetch>[1]): Promise<VenteBotCatalogRefresh> => {
+
+  return customFetch<VenteBotCatalogRefresh>(getRefreshVenteBotCatalogUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getRefreshVenteBotCatalogMutationKey = () => ['refreshVenteBotCatalog'] as const;
+
+export const getRefreshVenteBotCatalogMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof refreshVenteBotCatalog>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof refreshVenteBotCatalog>>, TError,void, TContext> => {
+
+const mutationKey = getRefreshVenteBotCatalogMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof refreshVenteBotCatalog>>, void> = () => {
+
+
+          return  refreshVenteBotCatalog(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RefreshVenteBotCatalogMutationResult = NonNullable<Awaited<ReturnType<typeof refreshVenteBotCatalog>>>
+
+    export type RefreshVenteBotCatalogMutationError = ErrorType<unknown>
+
+
+    /**
+ * @summary Refresh the VenteBot catalog using ETag validation
+ */
+export const useRefreshVenteBotCatalog = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof refreshVenteBotCatalog>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof refreshVenteBotCatalog>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getRefreshVenteBotCatalogMutationOptions(options));
+    }
+
+export const getUpdateVenteBotMappingUrl = (supplierProductId: number,) => {
+
+
+
+
+  return `/api/ventebot/catalog/${supplierProductId}/mapping`
+}
+
+/**
+ * @summary Map a supplier item to a KeyTopia product and set its resale price
+ */
+export const updateVenteBotMapping = async (supplierProductId: number,
+    venteBotMappingInput: VenteBotMappingInput, options?: Parameters<typeof customFetch>[1]): Promise<VenteBotMappingResult> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<VenteBotMappingResult>(getUpdateVenteBotMappingUrl(supplierProductId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(venteBotMappingInput)
+  }
+);}
+
+
+
+
+
+export const getUpdateVenteBotMappingMutationKey = () => ['updateVenteBotMapping'] as const;
+
+export const getUpdateVenteBotMappingMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateVenteBotMapping>>, TError,UpdateVenteBotMappingMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateVenteBotMapping>>, TError,UpdateVenteBotMappingMutationVariables, TContext> => {
+
+const mutationKey = getUpdateVenteBotMappingMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateVenteBotMapping>>, UpdateVenteBotMappingMutationVariables> = (props) => {
+          const {supplierProductId,data} = props ?? {};
+
+          return  updateVenteBotMapping(supplierProductId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateVenteBotMappingMutationResult = NonNullable<Awaited<ReturnType<typeof updateVenteBotMapping>>>
+    export type UpdateVenteBotMappingMutationBody = BodyType<VenteBotMappingInput>
+    export type UpdateVenteBotMappingMutationError = ErrorType<unknown>
+    export type UpdateVenteBotMappingMutationVariables = {supplierProductId: number;data: BodyType<VenteBotMappingInput>}
+
+    /**
+ * @summary Map a supplier item to a KeyTopia product and set its resale price
+ */
+export const useUpdateVenteBotMapping = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateVenteBotMapping>>, TError,UpdateVenteBotMappingMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateVenteBotMapping>>,
+        TError,
+        UpdateVenteBotMappingMutationVariables,
+        TContext
+      > => {
+      return useMutation(getUpdateVenteBotMappingMutationOptions(options));
+    }
+
+export const getListVenteBotOrdersUrl = () => {
+
+
+
+
+  return `/api/ventebot/orders`
+}
+
+/**
+ * @summary List supplier fulfillment status for customer orders
+ */
+export const listVenteBotOrders = async ( options?: Parameters<typeof customFetch>[1]): Promise<VenteBotOrderPage> => {
+
+  return customFetch<VenteBotOrderPage>(getListVenteBotOrdersUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListVenteBotOrdersQueryKey = () => {
+    return [
+    `/api/ventebot/orders`
+    ] as const;
+    }
+
+
+export const getListVenteBotOrdersQueryOptions = <TData = Awaited<ReturnType<typeof listVenteBotOrders>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listVenteBotOrders>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListVenteBotOrdersQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listVenteBotOrders>>> = ({ signal }) => listVenteBotOrders({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listVenteBotOrders>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListVenteBotOrdersQueryResult = NonNullable<Awaited<ReturnType<typeof listVenteBotOrders>>>
+export type ListVenteBotOrdersQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List supplier fulfillment status for customer orders
+ */
+
+export function useListVenteBotOrders<TData = Awaited<ReturnType<typeof listVenteBotOrders>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listVenteBotOrders>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListVenteBotOrdersQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getRetryVenteBotOrderUrl = (orderId: string,) => {
+
+
+
+
+  return `/api/ventebot/orders/${orderId}/retry`
+}
+
+/**
+ * @summary Retry a failed supplier fulfillment
+ */
+export const retryVenteBotOrder = async (orderId: string, options?: Parameters<typeof customFetch>[1]): Promise<VenteBotRetryResult> => {
+
+  return customFetch<VenteBotRetryResult>(getRetryVenteBotOrderUrl(orderId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getRetryVenteBotOrderMutationKey = () => ['retryVenteBotOrder'] as const;
+
+export const getRetryVenteBotOrderMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof retryVenteBotOrder>>, TError,RetryVenteBotOrderMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof retryVenteBotOrder>>, TError,RetryVenteBotOrderMutationVariables, TContext> => {
+
+const mutationKey = getRetryVenteBotOrderMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof retryVenteBotOrder>>, RetryVenteBotOrderMutationVariables> = (props) => {
+          const {orderId} = props ?? {};
+
+          return  retryVenteBotOrder(orderId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RetryVenteBotOrderMutationResult = NonNullable<Awaited<ReturnType<typeof retryVenteBotOrder>>>
+
+    export type RetryVenteBotOrderMutationError = ErrorType<unknown>
+    export type RetryVenteBotOrderMutationVariables = {orderId: string}
+
+    /**
+ * @summary Retry a failed supplier fulfillment
+ */
+export const useRetryVenteBotOrder = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof retryVenteBotOrder>>, TError,RetryVenteBotOrderMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof retryVenteBotOrder>>,
+        TError,
+        RetryVenteBotOrderMutationVariables,
+        TContext
+      > => {
+      return useMutation(getRetryVenteBotOrderMutationOptions(options));
+    }
 

@@ -3,11 +3,11 @@ import { createPortal } from 'react-dom';
 import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
 import { Link, Route, Switch, useLocation, useRoute } from 'wouter';
 import {
-  Activity, Archive, ArrowDownRight, ArrowUpRight, BarChart3, Bell, Boxes, Check, ChevronDown,
+  Activity, AlertTriangle, Archive, ArrowDownRight, ArrowUpRight, BarChart3, Bell, Boxes, Check, ChevronDown,
   CircleDollarSign, ClipboardList, Clock3, CreditCard, Database, FileClock, Filter, Gauge,
   FileSpreadsheet, Headphones, KeyRound, LayoutDashboard, LogOut, Menu, Package, Percent, Plus, RefreshCw,
-  Image as ImageIcon, Search, Settings2, ShieldCheck, ShoppingBag, SlidersHorizontal, Sparkles, Tag, Ticket, Trash2,
-  Truck, Upload, UserRound, Users, X, type LucideIcon,
+  Image as ImageIcon, Link2, RotateCcw, Search, Settings2, ShieldCheck, ShoppingBag, SlidersHorizontal, Sparkles, Tag, Ticket, Trash2,
+  Truck, Unlink, Upload, UserRound, Users, WalletCards, X, type LucideIcon,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import {
@@ -24,6 +24,9 @@ import {
   getListCustomersQueryKey, getListFlashSalesQueryKey, getListInventoryQueryKey,
   getListOrdersQueryKey, getListPaymentsQueryKey, getListProductsQueryKey,
   getListPromoCodesQueryKey, getListSupportTicketsQueryKey,
+  useGetVenteBotCatalog, useTestVenteBotConnection, useRefreshVenteBotCatalog,
+  useUpdateVenteBotMapping, useListVenteBotOrders, useRetryVenteBotOrder,
+  getGetVenteBotCatalogQueryKey, getListVenteBotOrdersQueryKey,
 } from '@workspace/api-client-react';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -48,7 +51,7 @@ const navGroups: { label: string; items: { href: string; label: string; icon: Lu
   { label: 'Command', items: [{ href: '/', label: 'Overview', icon: LayoutDashboard }, { href: '/orders', label: 'Orders', icon: ShoppingBag }, { href: '/payments', label: 'Payment review', icon: CreditCard, count: 'live' }, { href: '/support', label: 'Support queue', icon: Headphones }] },
   { label: 'Merchandising', items: [{ href: '/products', label: 'Products', icon: Package }, { href: '/inventory', label: 'Inventory', icon: Boxes }, { href: '/flash-sales', label: 'Flash sales', icon: Tag }, { href: '/promo-codes', label: 'Promo codes', icon: Percent }] },
   { label: 'Intelligence', items: [{ href: '/customers', label: 'Customers', icon: Users }, { href: '/analytics', label: 'Analytics', icon: BarChart3 }] },
-  { label: 'Control', items: [{ href: '/settings', label: 'Store settings', icon: Settings2 }, { href: '/audit-logs', label: 'Audit logs', icon: FileClock }] },
+  { label: 'Control', items: [{ href: '/settings', label: 'Store settings', icon: Settings2 }, { href: '/ventebot', label: 'VenteBot', icon: Link2 }, { href: '/audit-logs', label: 'Audit logs', icon: FileClock }] },
 ];
 
 const money = (value?: number | null) => `$${(value ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -631,6 +634,210 @@ function Settings() { const query = useGetStoreSettings({ query: { queryKey: get
 
 function AuditLogs() { return <div className="animate-rise"><PageIntro eyebrow="Accountability" title="Audit logs" description="A durable history of operator actions, available when the audit stream is connected." /><Card><EmptyState icon={FileClock} title="Audit stream is not connected" body="The current API exposes the audit-log surface but no activity list hook yet. This view is ready for the audit feed when it is available." /></Card></div>; }
 
+function VenteBot() {
+  const catalog = useGetVenteBotCatalog({ query: { queryKey: getGetVenteBotCatalogQueryKey(), staleTime: 30_000 } });
+  const orders = useListVenteBotOrders({ query: { queryKey: getListVenteBotOrdersQueryKey(), staleTime: 15_000 } });
+  const testConnection = useTestVenteBotConnection();
+  const refreshCatalog = useRefreshVenteBotCatalog();
+  const updateMapping = useUpdateVenteBotMapping();
+  const retryOrder = useRetryVenteBotOrder();
+  const queryClient = useQueryClient();
+  const [mappingProduct, setMappingProduct] = useState<any | null>(null);
+  const [localProductId, setLocalProductId] = useState('');
+  const [resalePriceText, setResalePriceText] = useState('');
+
+  const invalidateVenteBot = () => {
+    void queryClient.invalidateQueries({ queryKey: getGetVenteBotCatalogQueryKey() });
+    void queryClient.invalidateQueries({ queryKey: getListVenteBotOrdersQueryKey() });
+  };
+  const openMapping = (product: any) => {
+    setMappingProduct(product);
+    setLocalProductId(product.mappedProductId || '');
+    setResalePriceText(product.resalePriceUsd == null ? '' : String(product.resalePriceUsd));
+  };
+  const closeMapping = () => {
+    setMappingProduct(null);
+    setLocalProductId('');
+    setResalePriceText('');
+  };
+  const isValidResalePrice = (value: string) => {
+    const parsed = Number(value);
+    return value.trim().length > 0
+      && Number.isFinite(parsed)
+      && parsed >= 0
+      && Math.abs(parsed * 100 - Math.round(parsed * 100)) < 1e-8;
+  };
+  const saveMapping = () => {
+    if (!mappingProduct || !localProductId || !isValidResalePrice(resalePriceText)) return;
+    const resalePriceUsd = Number(resalePriceText);
+    updateMapping.mutate(
+      { supplierProductId: mappingProduct.id, data: { productId: localProductId, resalePriceUsd } },
+      { onSuccess: () => { invalidateVenteBot(); closeMapping(); } },
+    );
+  };
+  const unlinkMapping = () => {
+    if (!mappingProduct) return;
+    updateMapping.mutate(
+      { supplierProductId: mappingProduct.id, data: { productId: null, resalePriceUsd: null } },
+      { onSuccess: () => { invalidateVenteBot(); closeMapping(); } },
+    );
+  };
+  const connection = catalog.data?.connection;
+  const supplierProducts = catalog.data?.supplierProducts ?? [];
+  const localProducts = catalog.data?.localProducts ?? [];
+  const venteOrders = orders.data?.items ?? [];
+  const failedOrders = useMemo(() => venteOrders.filter((order: any) => order.status === 'failed'), [venteOrders]);
+  const blockedProducts = useMemo(() => supplierProducts.filter((product: any) => !product.availability.available), [supplierProducts]);
+  const statusTone = connection?.status === 'connected' ? 'green' : connection?.status === 'error' ? 'red' : 'orange';
+  const failedFulfillmentCount = connection?.failedFulfillmentCount ?? 0;
+  const testError = testConnection.error instanceof Error ? testConnection.error.message : 'The connection test could not be completed.';
+  const refreshError = refreshCatalog.error instanceof Error ? refreshCatalog.error.message : 'The supplier catalog could not be refreshed.';
+  const retryError = retryOrder.error instanceof Error ? retryOrder.error.message : 'The supplier order could not be retried.';
+  const reasonLabel = (reason: string | null | undefined) => {
+    if (!reason) return 'Availability confirmed';
+    if (reason === 'activation_required' || reason === 'activation_identifier_required') return 'Activation identifier required';
+    return titleCase(reason);
+  };
+  const availabilityTone = (product: any) => product.availability.available ? 'green' : product.availability.reason === 'out_of_stock' ? 'red' : 'orange';
+  const orderTone = (status: string) => status === 'completed' ? 'green' : status === 'failed' ? 'red' : status === 'awaiting_delivery' ? 'blue' : 'orange';
+
+  if (catalog.isLoading || orders.isLoading) {
+    return <><PageIntro eyebrow="Supplier operations" title="VenteBot" description="Keep supplier availability, mappings, and fulfillment work in view." /><LoadingBlock /></>;
+  }
+  if (catalog.isError || !catalog.data) {
+    return <div className="animate-rise"><PageIntro eyebrow="Supplier operations" title="VenteBot" description="The supplier control plane is temporarily out of reach." /><Card><ErrorState retry={() => catalog.refetch()} /></Card></div>;
+  }
+
+  return <div className="animate-rise">
+    <PageIntro
+      eyebrow="Supplier operations"
+      title="VenteBot"
+      description="A trustworthy handoff between KeyTopia's catalog and supplier fulfillment. Resolve blocked availability before it becomes a customer promise."
+      action={<div className="flex flex-wrap gap-2">
+        <Button variant="secondary" onClick={() => testConnection.mutate(undefined, { onSuccess: invalidateVenteBot })} disabled={testConnection.isPending} data-testid="button-test-ventebot-connection">
+          <ShieldCheck size={15} /> {testConnection.isPending ? 'Testing connection…' : 'Test connection'}
+        </Button>
+        <Button onClick={() => refreshCatalog.mutate(undefined, { onSuccess: invalidateVenteBot })} disabled={refreshCatalog.isPending} data-testid="button-refresh-ventebot-catalog">
+          <RefreshCw size={15} /> {refreshCatalog.isPending ? 'Refreshing catalog…' : 'Refresh catalog'}
+        </Button>
+      </div>}
+    />
+
+    <Card className="overflow-hidden border-slate-700/20 bg-slate-950 text-slate-100">
+      <div className="flex flex-col gap-5 border-b border-white/10 p-5 md:flex-row md:items-center md:justify-between md:p-6">
+        <div className="flex items-start gap-4">
+          <div className="rounded-2xl bg-cyan-300/15 p-3 text-cyan-200"><WalletCards size={22} /></div>
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-lg font-extrabold">Supplier connection</h3>
+              {connection && <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-[.08em] ${statusTone === 'green' ? 'bg-emerald-300/15 text-emerald-200' : statusTone === 'red' ? 'bg-rose-300/15 text-rose-200' : 'bg-amber-300/15 text-amber-200'}`} data-testid="status-ventebot-connection">{titleCase(connection.status)}</span>}
+            </div>
+            <p className="mt-1 text-sm text-slate-300/70">{connection?.apiKeyConfigured ? 'Reseller credentials are configured.' : 'No reseller key is configured. Supplier purchases remain unavailable.'}</p>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-x-8 gap-y-3 text-sm md:min-w-[360px]" data-testid="panel-ventebot-connection-metrics">
+          <div><p className="text-[10px] uppercase tracking-[.12em] text-slate-400">Wallet balance</p><p className="mt-1 font-mono font-bold text-cyan-100" data-testid="text-ventebot-wallet-balance">{money(connection?.walletBalanceUsd)}</p></div>
+          <div><p className="text-[10px] uppercase tracking-[.12em] text-slate-400">Active supplier products</p><p className="mt-1 font-mono font-bold" data-testid="text-ventebot-active-count">{connection?.activeSupplierProductCount ?? 0}</p></div>
+          <div><p className="text-[10px] uppercase tracking-[.12em] text-slate-400">Last check</p><p className="mt-1 text-xs font-semibold" data-testid="text-ventebot-last-check">{date(connection?.lastConnectionCheckAt)}</p></div>
+          <div><p className="text-[10px] uppercase tracking-[.12em] text-slate-400">Last catalog sync</p><p className="mt-1 text-xs font-semibold" data-testid="text-ventebot-last-sync">{date(connection?.lastSyncedAt)}</p></div>
+        </div>
+      </div>
+      {connection && (connection.lastConnectionError || failedFulfillmentCount > 0) && <div className="flex flex-wrap gap-3 bg-rose-400/10 px-5 py-3 text-xs font-bold text-rose-100 md:px-6">
+        {connection.lastConnectionError && <span className="flex items-center gap-2" data-testid="status-ventebot-connection-error"><AlertTriangle size={14} /> {connection.lastConnectionError}</span>}
+        {failedFulfillmentCount > 0 && <span className="flex items-center gap-2" data-testid="status-ventebot-failed-count"><AlertTriangle size={14} /> {failedFulfillmentCount} failed fulfillment{failedFulfillmentCount === 1 ? '' : 's'} need attention</span>}
+      </div>}
+    </Card>
+
+    {(testConnection.isSuccess || testConnection.isError || refreshCatalog.isSuccess || refreshCatalog.isError) && <div className="mt-4 grid gap-2">
+      {testConnection.isSuccess && <div className="rounded-xl border border-primary/20 bg-primary/8 px-4 py-3 text-sm font-bold text-primary" role="status" data-testid="status-ventebot-connection-test-success">{testConnection.data?.message || (testConnection.data?.connected ? 'VenteBot connection verified.' : 'VenteBot connection test returned an error.')}</div>}
+      {testConnection.isError && <div className="rounded-xl border border-destructive/20 bg-destructive/8 px-4 py-3 text-sm font-bold text-destructive" role="alert" data-testid="status-ventebot-connection-test-error">Connection test failed: {testError}</div>}
+      {refreshCatalog.isSuccess && <div className="rounded-xl border border-primary/20 bg-primary/8 px-4 py-3 text-sm font-bold text-primary" role="status" data-testid="status-ventebot-refresh-success">Catalog refreshed{refreshCatalog.data?.notModified ? ' — no supplier changes detected.' : ` — ${refreshCatalog.data?.supplierProductCount ?? 0} supplier products synchronized.`}</div>}
+      {refreshCatalog.isError && <div className="rounded-xl border border-destructive/20 bg-destructive/8 px-4 py-3 text-sm font-bold text-destructive" role="alert" data-testid="status-ventebot-refresh-error">Catalog refresh failed: {refreshError}</div>}
+    </div>}
+
+    <div className="mt-5 grid gap-4 sm:grid-cols-3">
+      <StatCard label="Supplier catalog" value={supplierProducts.length} sub={`${blockedProducts.length} blocked availability`} icon={Package} tone={blockedProducts.length ? 'orange' : 'green'} />
+      <StatCard label="Mapped for resale" value={supplierProducts.filter((product: any) => product.mappedProductId).length} sub={`${localProducts.length} local products available`} icon={Link2} tone="blue" />
+      <StatCard label="Failed supplier work" value={failedOrders.length} sub={failedOrders.length ? 'Retryable work is visible below' : 'No failed supplier orders'} icon={AlertTriangle} tone={failedOrders.length ? 'red' : 'green'} />
+    </div>
+
+    <Card className="mt-5 overflow-hidden">
+      <div className="flex flex-col gap-2 border-b border-border p-5 md:flex-row md:items-end md:justify-between">
+        <div><p className="font-mono text-[10px] font-bold uppercase tracking-[.18em] text-primary">Availability & mapping</p><h3 className="mt-1 text-xl font-extrabold">Supplier catalog</h3><p className="mt-1 text-sm text-muted-foreground">Only mapped products with a verified availability state should move into storefront fulfillment.</p></div>
+        <p className="font-mono text-xs text-muted-foreground" data-testid="text-ventebot-catalog-count">{supplierProducts.length} supplier products</p>
+      </div>
+      {supplierProducts.length ? <div className="divide-y divide-border">
+        {supplierProducts.map((product: any) => <div key={product.id} className="grid gap-4 p-5 xl:grid-cols-[1.45fr_.7fr_.8fr_auto] xl:items-center" data-testid={`row-ventebot-supplier-${product.id}`}>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2"><h4 className="font-extrabold" data-testid={`text-ventebot-product-name-${product.id}`}>{product.name}</h4><Badge tone={product.catalogActive ? 'green' : 'neutral'}>{product.catalogActive ? 'Catalog active' : 'Inactive'}</Badge>{product.apiTest && <Badge tone="blue">API test</Badge>}</div>
+            <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{product.description || 'No supplier description.'}</p>
+            <p className="mt-2 font-mono text-[10px] text-muted-foreground">Supplier #{product.id} · {titleCase(product.deliveryType)} · {titleCase(product.pricingType)}</p>
+          </div>
+          <div className="rounded-xl bg-muted/50 p-3"><p className="text-[10px] font-bold uppercase tracking-[.08em] text-muted-foreground">Supplier price</p><p className="mt-1 font-mono text-lg font-bold" data-testid={`text-ventebot-supplier-price-${product.id}`}>{money(product.priceUsd)}</p><p className="mt-1 text-[11px] text-muted-foreground">Stock {product.stock == null ? 'unknown' : product.stock}</p></div>
+          <div className={`rounded-xl p-3 ${product.availability.available ? 'bg-primary/8' : 'bg-accent/12'}`} data-testid={`status-ventebot-availability-${product.id}`}>
+            <p className="text-[10px] font-bold uppercase tracking-[.08em] text-muted-foreground">Availability</p>
+            <p className={`mt-1 text-sm font-extrabold ${product.availability.available ? 'text-primary' : 'text-accent-foreground'}`}>{product.availability.available ? 'Available' : reasonLabel(product.availability.reason)}</p>
+            <p className="mt-1 text-[11px] text-muted-foreground">{product.availability.available ? `${product.availability.quantity == null ? 'Quantity confirmed by supplier' : `${product.availability.quantity} available`}` : `Blocked: ${reasonLabel(product.availability.reason)}`}</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 xl:justify-end">
+            <div className="mr-1 text-right"><p className="text-[10px] font-bold uppercase tracking-[.08em] text-muted-foreground">Expected margin / unit</p><p className={`font-mono text-sm font-bold ${product.expectedMarginUsd != null && product.expectedMarginUsd < 0 ? 'text-destructive' : 'text-primary'}`} data-testid={`text-ventebot-margin-${product.id}`}>{product.expectedMarginUsd == null ? '—' : money(product.expectedMarginUsd)}</p></div>
+            <Button variant="secondary" className="text-xs" onClick={() => openMapping(product)} data-testid={`button-map-ventebot-product-${product.id}`}><Link2 size={14} /> {product.mappedProductId ? 'Edit mapping' : 'Map product'}</Button>
+          </div>
+          {product.mappedProductId && <div className="rounded-xl border border-border bg-background p-3 text-xs xl:col-span-4"><div className="flex flex-wrap items-center justify-between gap-2"><span className="flex items-center gap-2 font-bold"><Link2 size={13} className="text-primary" /> KeyTopia product: <span data-testid={`text-ventebot-mapped-product-${product.id}`}>{product.mappedProductName || product.mappedProductId}</span></span><span className="font-mono text-muted-foreground">Resale {product.resalePriceUsd == null ? '—' : money(product.resalePriceUsd)}</span></div></div>}
+        </div>)}
+      </div> : <EmptyState icon={Package} title="Supplier catalog is empty" body="Refresh the catalog after the VenteBot connection is configured." />}
+    </Card>
+
+    <Card className="mt-5 overflow-hidden">
+      <div className="flex flex-col gap-2 border-b border-border p-5 md:flex-row md:items-end md:justify-between">
+        <div><p className="font-mono text-[10px] font-bold uppercase tracking-[.18em] text-destructive">Fulfillment watch</p><h3 className="mt-1 text-xl font-extrabold">Supplier orders</h3><p className="mt-1 text-sm text-muted-foreground">Failed supplier work stays visible until it is retried or resolved by the provider.</p></div>
+        <div className="flex items-center gap-2"><Badge tone={failedOrders.length ? 'red' : 'green'}>{failedOrders.length ? `${failedOrders.length} failed` : 'No failures'}</Badge><Button variant="quiet" className="text-xs" onClick={() => orders.refetch()} data-testid="button-refresh-ventebot-orders"><RefreshCw size={14} /> Refresh</Button></div>
+      </div>
+      {orders.isError ? <ErrorState retry={() => orders.refetch()} /> : venteOrders.length ? <div className="overflow-x-auto">
+        <table className="w-full min-w-[1040px] text-left text-sm">
+          <thead className="bg-muted/55 text-[10px] uppercase tracking-[.12em] text-muted-foreground"><tr><th className="px-5 py-3">Order</th><th className="px-4 py-3">Customer / product</th><th className="px-4 py-3">Provider</th><th className="px-4 py-3">Value / cost</th><th className="px-4 py-3">Attempts</th><th className="px-4 py-3">Status</th><th className="px-5 py-3 text-right">Action</th></tr></thead>
+          <tbody className="divide-y divide-border">{venteOrders.map((order: any) => <tr key={order.orderId} className={`${order.status === 'failed' ? 'bg-destructive/5' : ''} hover:bg-muted/30`} data-testid={`row-ventebot-order-${order.orderId}`}>
+            <td className="px-5 py-4"><p className="font-mono text-xs font-bold" data-testid={`text-ventebot-order-number-${order.orderId}`}>{order.orderNumber}</p><p className="mt-1 text-xs text-muted-foreground">{date(order.createdAt)}</p></td>
+            <td className="px-4 py-4"><p className="font-bold">{order.customerName}</p><p className="mt-1 text-xs text-muted-foreground">{order.productName}</p></td>
+            <td className="px-4 py-4"><p className="font-mono text-xs">{order.providerOrderId ?? 'Not submitted'}</p><p className="mt-1 text-[11px] text-muted-foreground">{order.providerStatus ? titleCase(order.providerStatus) : '—'}</p></td>
+            <td className="px-4 py-4"><p className="font-mono font-bold">{money(order.priceUsd)}</p><p className="mt-1 text-[11px] text-muted-foreground">Cost {order.acquisitionCostUsd == null ? '—' : money(order.acquisitionCostUsd)}</p></td>
+            <td className="px-4 py-4 font-mono text-xs">{order.attempts}</td>
+            <td className="px-4 py-4"><Badge tone={orderTone(order.status)}>{titleCase(order.status)}</Badge>{order.lastError && <p className="mt-2 max-w-[220px] text-xs font-semibold text-destructive" data-testid={`text-ventebot-order-error-${order.orderId}`}>{order.lastError}</p>}{order.nextAttemptAt && order.status !== 'failed' && <p className="mt-2 text-[11px] text-muted-foreground">Next attempt {date(order.nextAttemptAt)}</p>}</td>
+            <td className="px-5 py-4 text-right">{order.canRetry ? <Button variant="secondary" className="text-xs" onClick={() => retryOrder.mutate({ orderId: order.orderId }, { onSuccess: invalidateVenteBot })} disabled={retryOrder.isPending} data-testid={`button-retry-ventebot-order-${order.orderId}`}><RotateCcw size={13} /> {retryOrder.isPending ? 'Retrying…' : 'Retry fulfillment'}</Button> : <span className="text-xs font-semibold text-muted-foreground">{order.status === 'completed' ? 'Fulfilled' : 'Waiting on provider'}</span>}</td>
+          </tr>)}</tbody>
+        </table>
+      </div> : <EmptyState icon={Truck} title="No supplier orders" body="Orders sent to VenteBot will appear here with their provider and fulfillment state." />}
+      {retryOrder.isError && <div className="border-t border-destructive/20 bg-destructive/8 px-5 py-3 text-sm font-bold text-destructive" role="alert" data-testid="status-ventebot-retry-error">Retry failed: {retryError}</div>}
+      {retryOrder.isSuccess && <div className="border-t border-primary/20 bg-primary/8 px-5 py-3 text-sm font-bold text-primary" role="status" data-testid="status-ventebot-retry-success">Supplier fulfillment retry submitted.</div>}
+    </Card>
+
+    {mappingProduct && <Modal title={`Map ${mappingProduct.name}`} onClose={closeMapping}>
+      <p className="text-sm leading-6 text-muted-foreground">Choose the existing KeyTopia product customers will receive, then set the resale price used for margin tracking.</p>
+      {mappingProduct.mappedProductId && <p className="mt-3 rounded-lg bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-800 dark:text-amber-200">Changing or unlinking this mapping pauses its current KeyTopia product to prevent selling without a supplier source.</p>}
+      <div className="mt-5 grid gap-4">
+        <Field label="KeyTopia product">
+          <Select value={localProductId} onChange={(event) => setLocalProductId(event.target.value)} data-testid={`select-ventebot-local-product-${mappingProduct.id}`}>
+            <option value="">Choose an existing product</option>
+            {localProducts.map((product: any) => <option key={product.id} value={product.id}>{product.nameEn} · {money(product.priceUsd)}{product.active ? '' : ' · inactive'}</option>)}
+          </Select>
+        </Field>
+        <Field label="Resale price (USD)" hint="The supplier response returns the expected margin shown on this page.">
+          <Input type="number" min="0" step="0.01" value={resalePriceText} onChange={(event) => setResalePriceText(event.target.value)} placeholder="e.g. 7.50" data-testid={`input-ventebot-resale-price-${mappingProduct.id}`} />
+        </Field>
+        <div className="grid grid-cols-2 gap-3 rounded-xl bg-muted/55 p-4">
+          <div><p className="text-[10px] font-bold uppercase tracking-[.08em] text-muted-foreground">Supplier price</p><p className="mt-1 font-mono font-bold">{money(mappingProduct.priceUsd)}</p></div>
+          <div><p className="text-[10px] font-bold uppercase tracking-[.08em] text-muted-foreground">Current margin</p><p className="mt-1 font-mono font-bold text-primary">{mappingProduct.expectedMarginUsd == null ? '—' : money(mappingProduct.expectedMarginUsd)}</p></div>
+        </div>
+      </div>
+      {updateMapping.isError && <p className="mt-4 rounded-lg bg-destructive/10 p-3 text-xs font-bold text-destructive" role="alert" data-testid="status-ventebot-mapping-error">Mapping could not be saved. Try again.</p>}
+      <div className="mt-5 flex flex-wrap justify-between gap-2">
+        <Button variant="quiet" className="text-destructive" disabled={!mappingProduct.mappedProductId || updateMapping.isPending} onClick={unlinkMapping} data-testid={`button-unlink-ventebot-product-${mappingProduct.id}`}><Unlink size={14} /> Unlink &amp; pause</Button>
+        <div className="flex gap-2"><Button variant="secondary" onClick={closeMapping}>Cancel</Button><Button disabled={!localProductId || !isValidResalePrice(resalePriceText) || updateMapping.isPending} onClick={saveMapping} data-testid={`button-save-ventebot-mapping-${mappingProduct.id}`}><Check size={15} /> {updateMapping.isPending ? 'Saving…' : 'Save mapping'}</Button></div>
+      </div>
+    </Modal>}
+  </div>;
+}
+
 function Login() {
   const [, setLocation] = useLocation();
   const login = useAdminLogin();
@@ -681,7 +888,7 @@ function Login() {
 
 function NotFound() { return <div className="grid min-h-[100dvh] place-items-center bg-background p-5 text-center"><div><p className="font-mono text-xs font-bold uppercase tracking-[.2em] text-primary">404 / outside the map</p><h1 className="mt-3 text-5xl font-extrabold tracking-[-.06em]">Nothing here.</h1><p className="mt-3 text-muted-foreground">The operation you requested does not exist.</p><Link href="/" className="mt-6 inline-flex rounded-lg bg-primary px-4 py-2 text-sm font-bold text-primary-foreground" data-testid="link-back-overview">Return to overview</Link></div></div>; }
 
-function Router() { return <Switch><Route path="/login" component={Login} /><Route path="/" component={() => <Shell><Overview /></Shell>} /><Route path="/orders" component={() => <Shell><Orders /></Shell>} /><Route path="/payments" component={() => <Shell><Payments /></Shell>} /><Route path="/products" component={() => <Shell><Products /></Shell>} /><Route path="/inventory" component={() => <Shell><Inventory /></Shell>} /><Route path="/flash-sales" component={() => <Shell><FlashSales /></Shell>} /><Route path="/promo-codes" component={() => <Shell><PromoCodes /></Shell>} /><Route path="/customers" component={() => <Shell><Customers /></Shell>} /><Route path="/support" component={() => <Shell><Support /></Shell>} /><Route path="/analytics" component={() => <Shell><Analytics /></Shell>} /><Route path="/settings" component={() => <Shell><Settings /></Shell>} /><Route path="/audit-logs" component={() => <Shell><AuditLogs /></Shell>} /><Route component={NotFound} /></Switch>; }
+function Router() { return <Switch><Route path="/login" component={Login} /><Route path="/" component={() => <Shell><Overview /></Shell>} /><Route path="/orders" component={() => <Shell><Orders /></Shell>} /><Route path="/payments" component={() => <Shell><Payments /></Shell>} /><Route path="/products" component={() => <Shell><Products /></Shell>} /><Route path="/inventory" component={() => <Shell><Inventory /></Shell>} /><Route path="/flash-sales" component={() => <Shell><FlashSales /></Shell>} /><Route path="/promo-codes" component={() => <Shell><PromoCodes /></Shell>} /><Route path="/customers" component={() => <Shell><Customers /></Shell>} /><Route path="/support" component={() => <Shell><Support /></Shell>} /><Route path="/analytics" component={() => <Shell><Analytics /></Shell>} /><Route path="/settings" component={() => <Shell><Settings /></Shell>} /><Route path="/ventebot" component={() => <Shell><VenteBot /></Shell>} /><Route path="/audit-logs" component={() => <Shell><AuditLogs /></Shell>} /><Route component={NotFound} /></Switch>; }
 
 function App() { return <QueryClientProvider client={queryClient}><TooltipProvider><ErrorBoundary><Router /></ErrorBoundary><Toaster /></TooltipProvider></QueryClientProvider>; }
 

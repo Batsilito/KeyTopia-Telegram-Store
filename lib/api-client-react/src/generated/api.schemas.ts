@@ -760,6 +760,182 @@ export interface DashboardOverview {
   recentTickets: SupportTicket[];
 }
 
+export type VenteBotConnectionStatusStatus = typeof VenteBotConnectionStatusStatus[keyof typeof VenteBotConnectionStatusStatus];
+
+
+export const VenteBotConnectionStatusStatus = {
+  not_configured: 'not_configured',
+  untested: 'untested',
+  connected: 'connected',
+  error: 'error',
+} as const;
+
+export interface VenteBotConnectionStatus {
+  apiKeyConfigured: boolean;
+  status: VenteBotConnectionStatusStatus;
+  /** @nullable */
+  lastConnectionCheckAt: string | null;
+  /** @nullable */
+  lastConnectionError: string | null;
+  /** @nullable */
+  walletBalanceUsd: number | null;
+  /** @nullable */
+  lastSyncedAt: string | null;
+  activeSupplierProductCount: number;
+  failedFulfillmentCount: number;
+}
+
+/**
+ * @nullable
+ */
+export type VenteBotAvailabilityReason = typeof VenteBotAvailabilityReason[keyof typeof VenteBotAvailabilityReason] | null;
+
+
+export const VenteBotAvailabilityReason = {
+  not_configured: 'not_configured',
+  inactive: 'inactive',
+  test_product: 'test_product',
+  activation_required: 'activation_required',
+  unsupported_delivery: 'unsupported_delivery',
+  stock_unknown: 'stock_unknown',
+  out_of_stock: 'out_of_stock',
+} as const;
+
+export interface VenteBotAvailability {
+  available: boolean;
+  /** @nullable */
+  quantity: number | null;
+  /** @nullable */
+  reason: VenteBotAvailabilityReason;
+}
+
+export interface VenteBotCatalogProduct {
+  id: number;
+  name: string;
+  description: string;
+  /** @nullable */
+  emoji: string | null;
+  /** @nullable */
+  imageUrl: string | null;
+  priceUsd: number;
+  /** @nullable */
+  standardPriceUsd: number | null;
+  pricingType: string;
+  /** @nullable */
+  specialPriceExpiresAt: string | null;
+  warrantyDays: number;
+  deliveryType: string;
+  /** @nullable */
+  stock: number | null;
+  apiTest: boolean;
+  catalogActive: boolean;
+  lastSyncedAt: string;
+  /** @nullable */
+  mappedProductId: string | null;
+  /** @nullable */
+  mappedProductName: string | null;
+  /** @nullable */
+  resalePriceUsd: number | null;
+  /** @nullable */
+  expectedMarginUsd: number | null;
+  availability: VenteBotAvailability;
+}
+
+export interface VenteBotLocalProduct {
+  id: string;
+  nameEn: string;
+  priceUsd: number;
+  active: boolean;
+  /** @nullable */
+  ventebotProductId: number | null;
+}
+
+export interface VenteBotCatalog {
+  connection: VenteBotConnectionStatus;
+  supplierProducts: VenteBotCatalogProduct[];
+  localProducts: VenteBotLocalProduct[];
+}
+
+export interface VenteBotConnectionTest {
+  connected: boolean;
+  checkedAt: string;
+  /** @nullable */
+  walletBalanceUsd: number | null;
+  message: string;
+}
+
+export interface VenteBotCatalogRefresh {
+  notModified: boolean;
+  /** @nullable */
+  lastSyncedAt: string | null;
+  supplierProductCount: number;
+}
+
+export interface VenteBotMappingInput {
+  /** @nullable */
+  productId: string | null;
+  /**
+     * @minimum 0
+     * @maximum 9999999999.99
+     * @nullable
+     */
+  resalePriceUsd: number | null;
+}
+
+export interface VenteBotMappingResult {
+  supplierProductId: number;
+  /** @nullable */
+  productId: string | null;
+  /** @nullable */
+  resalePriceUsd: number | null;
+  /** @nullable */
+  expectedMarginUsd: number | null;
+}
+
+export type VenteBotOrderStatus = typeof VenteBotOrderStatus[keyof typeof VenteBotOrderStatus];
+
+
+export const VenteBotOrderStatus = {
+  pending: 'pending',
+  submitting: 'submitting',
+  awaiting_delivery: 'awaiting_delivery',
+  completed: 'completed',
+  failed: 'failed',
+} as const;
+
+export interface VenteBotOrder {
+  orderId: string;
+  orderNumber: string;
+  customerName: string;
+  productName: string;
+  supplierProductId: number;
+  /** @nullable */
+  providerOrderId: number | null;
+  /** @nullable */
+  providerStatus: string | null;
+  status: VenteBotOrderStatus;
+  priceUsd: number;
+  /** @nullable */
+  acquisitionCostUsd: number | null;
+  attempts: number;
+  /** @nullable */
+  lastError: string | null;
+  /** @nullable */
+  nextAttemptAt: string | null;
+  createdAt: string;
+  canRetry: boolean;
+}
+
+export interface VenteBotOrderPage {
+  items: VenteBotOrder[];
+}
+
+export interface VenteBotRetryResult {
+  status: string;
+  /** @nullable */
+  orderStatus: string | null;
+}
+
 export type PageParameter = number;
 
 export type PageSizeParameter = number;

@@ -19,6 +19,8 @@ import {
   supportTickets,
   telegramPaymentNotifications,
   referrals,
+  ventebotCatalogProducts,
+  ventebotOrderFulfillments,
   walletTopUps,
   walletTransactions,
   users,
@@ -31,6 +33,13 @@ import {
 } from "../lib/binance-topups";
 import { createBinanceFailureNotificationPlan } from "../lib/binance-verification";
 import { fulfillAutomaticOrder } from "../lib/order-fulfillment";
+import {
+  createVenteBotFulfillmentValues,
+  listDueVenteBotOrderIds,
+  processVenteBotFulfillment,
+  retryVenteBotFulfillment,
+} from "../lib/ventebot-fulfillment";
+import { getVenteBotAvailability } from "../lib/ventebot-rules";
 import {
   calculatePercentageAmount,
   rewardsAreEligible,
@@ -57,6 +66,7 @@ export const telegramBot = telegramBotToken ? new Bot(telegramBotToken) : null;
 const objectStorageService = new ObjectStorageService();
 let binanceProcessingPromise: Promise<void> | null = null;
 let paymentNotificationPromise: Promise<void> | null = null;
+let supplierFulfillmentPromise: Promise<void> | null = null;
 let schedulerStarted = false;
 const FLASH_SALE_REMINDER_INTERVAL_MS = 30 * 60 * 1000;
 const flashSaleReminderAt = new Map<string, number>();
@@ -480,12 +490,16 @@ async function queueProductPurchaseBroadcast(order: typeof orders.$inferSelect) 
 export async function notifyOrderConfirmed(orderId: string) {
   const fulfillment = await fulfillAutomaticOrder(orderId);
   if (!fulfillment) return false;
+  const supplierOrder = fulfillment.order.ventebotProductId !== null;
   await queueProductPurchaseBroadcast(fulfillment.order);
   await notifyAdminProductSold(fulfillment.order.id);
   if (fulfillment.status === "delivered") {
     await issueReferralRewardForOrder(fulfillment.order);
   }
-  if (!telegramBot) return false;
+  if (!telegramBot) {
+    if (supplierOrder) dispatchVenteBotFulfillment(orderId);
+    return false;
+  }
   if (fulfillment.status === "delivered" && fulfillment.order.deliveryInfo) {
     return notifyOrderDelivered(orderId);
   }
@@ -497,7 +511,10 @@ export async function notifyOrderConfirmed(orderId: string) {
     .from(users)
     .where(eq(users.id, fulfillment.order.userId))
     .limit(1);
-  if (!customer[0]) return false;
+  if (!customer[0]) {
+    if (supplierOrder) dispatchVenteBotFulfillment(orderId);
+    return false;
+  }
   try {
     await telegramBot.api.sendMessage(
       customer[0].telegramUserId,
@@ -515,10 +532,42 @@ export async function notifyOrderConfirmed(orderId: string) {
       .update(orders)
       .set({ paymentNotifiedAt: new Date(), updatedAt: new Date() })
       .where(eq(orders.id, orderId));
+    if (supplierOrder) dispatchVenteBotFulfillment(orderId);
     return true;
   } catch (error) {
     logger.warn({ err: error, orderId }, "Unable to send order confirmation to Telegram");
+    if (supplierOrder) dispatchVenteBotFulfillment(orderId);
     return false;
+  }
+}
+
+function dispatchVenteBotFulfillment(orderId: string) {
+  void processAndNotifyVenteBotOrder(orderId).catch((error) => {
+    logger.error({ err: error, orderId }, "VenteBot fulfillment dispatch failed");
+  });
+}
+
+async function processAndNotifyVenteBotOrder(orderId: string) {
+  const result = await processVenteBotFulfillment(orderId);
+  if (result.status === "completed" && result.order) {
+    await issueReferralRewardForOrder(result.order);
+    await notifyOrderDelivered(orderId);
+  }
+}
+
+export async function retryAndNotifyVenteBotOrder(orderId: string) {
+  const result = await retryVenteBotFulfillment(orderId);
+  if (result.status === "completed" && result.order) {
+    await issueReferralRewardForOrder(result.order);
+    await notifyOrderDelivered(orderId);
+  }
+  return result;
+}
+
+async function recoverVenteBotFulfillments() {
+  const dueOrderIds = await listDueVenteBotOrderIds();
+  for (const orderId of dueOrderIds) {
+    await processAndNotifyVenteBotOrder(orderId);
   }
 }
 
@@ -1043,6 +1092,7 @@ async function recoverOrderNotifications() {
         and(
           eq(orders.deliveryType, "automatic"),
           inArray(orders.status, ["paid", "processing"]),
+          isNull(orders.ventebotProductId),
         ),
         and(
           inArray(orders.status, ["paid", "processing"]),
@@ -1067,6 +1117,7 @@ export function startStoreNotificationScheduler() {
     await releaseExpiredCheckouts();
     await notifyDueFlashSales();
     await recoverOrderNotifications();
+    await recoverVenteBotFulfillments();
   };
   const runMaintenanceSafely = () => {
     void runMaintenance().catch((error) => {
@@ -1952,15 +2003,41 @@ async function acceptSupportReply(ctx: Context, user: typeof users.$inferSelect,
 }
 
 async function getProductAvailability(product: typeof products.$inferSelect) {
+  if (product.ventebotProductId !== null) {
+    const rows = await db
+      .select()
+      .from(ventebotCatalogProducts)
+      .where(eq(ventebotCatalogProducts.id, product.ventebotProductId))
+      .limit(1);
+    const supplierProduct = rows[0];
+    if (!supplierProduct) {
+      return {
+        inStock: false,
+        quantity: "0",
+        maxQuantity: 0,
+      };
+    }
+    const availability = getVenteBotAvailability(
+      supplierProduct,
+      Boolean(process.env.VENTEBOT_RESELLER_KEY),
+    );
+    return {
+      inStock: availability.available,
+      quantity: availability.quantity === null
+        ? "∞"
+        : String(availability.quantity),
+      maxQuantity: availability.quantity ?? 99,
+    };
+  }
   if (product.stockType === "unlimited") {
-    return { inStock: true, quantity: "∞" };
+    return { inStock: true, quantity: "∞", maxQuantity: 99 };
   }
   const stock = await db
     .select({ availableQuantity: count(inventoryItems.id) })
     .from(inventoryItems)
     .where(and(eq(inventoryItems.productId, product.id), eq(inventoryItems.status, "available")));
   const quantity = Number(stock[0]?.availableQuantity ?? 0);
-  return { inStock: quantity > 0, quantity: String(quantity) };
+  return { inStock: quantity > 0, quantity: String(quantity), maxQuantity: quantity };
 }
 
 async function getActiveFlashSale(productId: string, now = new Date()) {
@@ -2077,6 +2154,20 @@ async function showShop(
   const stockByProduct = new Map(
     stockRows.map((row) => [row.productId, Number(row.availableQuantity)]),
   );
+  const supplierAvailabilityByProduct = new Map<
+    string,
+    Awaited<ReturnType<typeof getProductAvailability>>
+  >();
+  await Promise.all(
+    rows
+      .filter((product) => product.ventebotProductId !== null)
+      .map(async (product) => {
+        supplierAvailabilityByProduct.set(
+          product.id,
+          await getProductAvailability(product),
+        );
+      }),
+  );
   const activeSaleRows = await db
     .select()
     .from(flashSales)
@@ -2087,10 +2178,14 @@ async function showShop(
     ));
   const activeSaleByProduct = new Map(activeSaleRows.map((sale) => [sale.productId, sale]));
   const sortedRows = [...rows].sort((left, right) => {
-    const leftAvailable =
-      left.stockType === "unlimited" || (stockByProduct.get(left.id) ?? 0) > 0;
-    const rightAvailable =
-      right.stockType === "unlimited" || (stockByProduct.get(right.id) ?? 0) > 0;
+    const leftAvailability = supplierAvailabilityByProduct.get(left.id);
+    const rightAvailability = supplierAvailabilityByProduct.get(right.id);
+    const leftAvailable = leftAvailability
+      ? leftAvailability.inStock
+      : left.stockType === "unlimited" || (stockByProduct.get(left.id) ?? 0) > 0;
+    const rightAvailable = rightAvailability
+      ? rightAvailability.inStock
+      : right.stockType === "unlimited" || (stockByProduct.get(right.id) ?? 0) > 0;
     return Number(leftAvailable) - Number(rightAvailable);
   });
   const channel = await channelConfigured();
@@ -2100,8 +2195,11 @@ async function showShop(
       const sale = activeSaleByProduct.get(product.id) ?? null;
       const price = effectiveProductPrice(product, sale);
       const isUnlimited = product.stockType === "unlimited";
-      const quantity = isUnlimited ? "∞" : String(stockByProduct.get(product.id) ?? 0);
-      const inStock = isUnlimited || quantity !== "0";
+      const supplierAvailability = supplierAvailabilityByProduct.get(product.id);
+      const quantity = supplierAvailability?.quantity ??
+        (isUnlimited ? "∞" : String(stockByProduct.get(product.id) ?? 0));
+      const inStock = supplierAvailability?.inStock ??
+        (isUnlimited || quantity !== "0");
       const button = createProductShopButton(
         {
           id: product.id,
@@ -2252,7 +2350,7 @@ async function showQuantitySelector(ctx: Context, user: typeof users.$inferSelec
   const availability = await getProductAvailability(product);
   const sale = await getActiveFlashSale(product.id);
   const price = effectiveProductPrice(product, sale);
-  const maxQuantity = product.stockType === "unlimited" ? 99 : Number(availability.quantity);
+  const maxQuantity = availability.maxQuantity;
   if (!availability.inStock || maxQuantity < 1) {
     await ctx.reply(t(languageOf(user), "outOfStock"));
     return;
@@ -2313,7 +2411,7 @@ async function acceptCustomQuantity(
     return true;
   }
   const availability = await getProductAvailability(product);
-  const maxQuantity = product.stockType === "unlimited" ? 99 : Number(availability.quantity);
+  const maxQuantity = availability.maxQuantity;
   if (parsed > maxQuantity) {
     await ctx.reply(
       t(language, "invalidCustomQuantity").replace("{max}", String(maxQuantity)),
@@ -2333,7 +2431,7 @@ async function beginCheckout(ctx: Context, user: typeof users.$inferSelect, prod
   const availability = await getProductAvailability(product);
   const sale = await getActiveFlashSale(product.id);
   const price = effectiveProductPrice(product, sale);
-  const maxQuantity = product.stockType === "unlimited" ? 99 : Number(availability.quantity);
+  const maxQuantity = availability.maxQuantity;
   const quantity = Math.min(Math.max(Math.trunc(requestedQuantity), 1), maxQuantity);
   if (!availability.inStock || maxQuantity < 1 || quantity !== requestedQuantity) {
     await ctx.reply(t(languageOf(user), "outOfStock"));
@@ -2377,6 +2475,7 @@ async function beginCheckout(ctx: Context, user: typeof users.$inferSelect, prod
       reference,
       userId: user.id,
       productId: product.id,
+      ventebotProductId: product.ventebotProductId,
       productNameSnapshot: product.nameEn,
       durationSnapshot: product.duration,
       warrantySnapshot: product.warranty,
@@ -2533,6 +2632,7 @@ async function payCheckoutWithWallet(
         orderNumber: checkout.checkout.reference,
         userId: user.id,
         productId: checkout.checkout.productId,
+        ventebotProductId: checkout.checkout.ventebotProductId,
         checkoutSessionId: checkout.checkout.id,
         productNameSnapshot: checkout.checkout.productNameSnapshot,
         durationSnapshot: checkout.checkout.durationSnapshot,
@@ -2549,6 +2649,15 @@ async function payCheckoutWithWallet(
       .returning();
     const order = orderRows[0];
     if (!order) throw new Error("Unable to create wallet-paid order");
+    if (checkout.checkout.ventebotProductId !== null) {
+      await tx
+        .insert(ventebotOrderFulfillments)
+        .values(createVenteBotFulfillmentValues(
+          order.id,
+          checkout.checkout.ventebotProductId,
+        ))
+        .onConflictDoNothing();
+    }
 
     await tx.insert(payments).values({
       checkoutSessionId: checkout.checkout.id,

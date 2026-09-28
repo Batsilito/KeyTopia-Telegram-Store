@@ -151,12 +151,47 @@ export const products = pgTable("products", {
   instructionsAr: text("instructions_ar").default("").notNull(),
   imageUrl: text("image_url"),
   telegramCustomEmojiId: text("telegram_custom_emoji_id"),
+  ventebotProductId: integer("ventebot_product_id"),
   stockType: stockTypeEnum("stock_type").default("unlimited").notNull(),
   deliveryType: deliveryTypeEnum("delivery_type").default("manual").notNull(),
   active: boolean("active").default(true).notNull(),
   displayStock: boolean("display_stock").default(false).notNull(),
   lowStockThreshold: integer("low_stock_threshold").default(3).notNull(),
   createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (table) => ({
+  ventebotProductIdx: uniqueIndex("products_ventebot_product_idx").on(
+    table.ventebotProductId,
+  ),
+}));
+
+export const ventebotCatalogProducts = pgTable("ventebot_catalog_products", {
+  id: integer("id").primaryKey(),
+  name: text("name").notNull(),
+  description: text("description").default("").notNull(),
+  emoji: text("emoji"),
+  imageUrl: text("image_url"),
+  priceUsd: numeric("price_usd", { precision: 12, scale: 2 }).notNull(),
+  standardPriceUsd: numeric("standard_price_usd", { precision: 12, scale: 2 }),
+  pricingType: text("pricing_type").notNull(),
+  specialPriceExpiresAt: text("special_price_expires_at"),
+  warrantyDays: integer("warranty_days").notNull(),
+  deliveryType: text("delivery_type").notNull(),
+  stock: integer("stock"),
+  apiTest: boolean("api_test").default(false).notNull(),
+  catalogActive: boolean("catalog_active").default(true).notNull(),
+  lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: updatedAt(),
+});
+
+export const ventebotCatalogSyncState = pgTable("ventebot_catalog_sync_state", {
+  id: integer("id").primaryKey().default(1),
+  etag: text("etag"),
+  lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+  lastConnectionCheckAt: timestamp("last_connection_check_at", { withTimezone: true }),
+  lastConnectionStatus: text("last_connection_status").default("untested").notNull(),
+  lastConnectionError: text("last_connection_error"),
+  walletBalanceUsd: numeric("wallet_balance_usd", { precision: 12, scale: 2 }),
   updatedAt: updatedAt(),
 });
 
@@ -189,6 +224,7 @@ export const checkoutSessions = pgTable("checkout_sessions", {
   reference: text("reference").notNull(),
   userId: uuid("user_id").notNull(),
   productId: uuid("product_id").notNull(),
+  ventebotProductId: integer("ventebot_product_id"),
   productNameSnapshot: text("product_name_snapshot").notNull(),
   durationSnapshot: text("duration_snapshot").notNull(),
   warrantySnapshot: text("warranty_snapshot").notNull(),
@@ -209,6 +245,7 @@ export const orders = pgTable(
     orderNumber: text("order_number").notNull(),
     userId: uuid("user_id").notNull(),
     productId: uuid("product_id").notNull(),
+    ventebotProductId: integer("ventebot_product_id"),
     checkoutSessionId: uuid("checkout_session_id"),
     productNameSnapshot: text("product_name_snapshot").notNull(),
     durationSnapshot: text("duration_snapshot").notNull(),
@@ -232,6 +269,38 @@ export const orders = pgTable(
   },
   (table) => ({
     orderNumberIdx: uniqueIndex("orders_order_number_idx").on(table.orderNumber),
+  }),
+);
+
+export const ventebotOrderFulfillments = pgTable(
+  "ventebot_order_fulfillments",
+  {
+    id: id(),
+    orderId: uuid("order_id").notNull(),
+    ventebotProductId: integer("ventebot_product_id").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    ventebotOrderId: integer("ventebot_order_id"),
+    status: text("status").default("pending").notNull(),
+    providerStatus: text("provider_status"),
+    acquisitionCostUsd: numeric("acquisition_cost_usd", { precision: 12, scale: 2 }),
+    quoteTotalUsd: numeric("quote_total_usd", { precision: 12, scale: 2 }),
+    quotedAt: timestamp("quoted_at", { withTimezone: true }),
+    orderRequestStartedAt: timestamp("order_request_started_at", { withTimezone: true }),
+    attempts: integer("attempts").default(0).notNull(),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  (table) => ({
+    orderIdx: uniqueIndex("ventebot_order_fulfillments_order_idx").on(table.orderId),
+    idempotencyIdx: uniqueIndex("ventebot_order_fulfillments_idempotency_idx").on(
+      table.idempotencyKey,
+    ),
+    providerOrderIdx: uniqueIndex("ventebot_order_fulfillments_provider_order_idx").on(
+      table.ventebotOrderId,
+    ),
   }),
 );
 

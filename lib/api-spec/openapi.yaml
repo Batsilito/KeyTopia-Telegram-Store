@@ -21,6 +21,7 @@ tags:
   - name: settings
   - name: analytics
   - name: diagnostics
+  - name: ventebot
   - name: storage
 paths:
   /healthz:
@@ -692,6 +693,91 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AnalyticsSummary"
+  /ventebot/catalog:
+    get:
+      operationId: getVenteBotCatalog
+      tags: [ventebot]
+      summary: Get VenteBot connection status and synchronized supplier catalog
+      responses:
+        "200":
+          description: Supplier catalog
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VenteBotCatalog"
+  /ventebot/test:
+    post:
+      operationId: testVenteBotConnection
+      tags: [ventebot]
+      summary: Verify the configured VenteBot reseller key
+      responses:
+        "200":
+          description: Connection check result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VenteBotConnectionTest"
+  /ventebot/catalog/refresh:
+    post:
+      operationId: refreshVenteBotCatalog
+      tags: [ventebot]
+      summary: Refresh the VenteBot catalog using ETag validation
+      responses:
+        "200":
+          description: Catalog refresh result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VenteBotCatalogRefresh"
+  /ventebot/catalog/{supplierProductId}/mapping:
+    patch:
+      operationId: updateVenteBotMapping
+      tags: [ventebot]
+      summary: Map a supplier item to a KeyTopia product and set its resale price
+      parameters:
+        - in: path
+          name: supplierProductId
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VenteBotMappingInput"
+      responses:
+        "200":
+          description: Mapping updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VenteBotMappingResult"
+  /ventebot/orders:
+    get:
+      operationId: listVenteBotOrders
+      tags: [ventebot]
+      summary: List supplier fulfillment status for customer orders
+      responses:
+        "200":
+          description: Recent supplier orders
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VenteBotOrderPage"
+  /ventebot/orders/{orderId}/retry:
+    post:
+      operationId: retryVenteBotOrder
+      tags: [ventebot]
+      summary: Retry a failed supplier fulfillment
+      parameters:
+        - $ref: "#/components/parameters/OrderId"
+      responses:
+        "200":
+          description: Supplier retry result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VenteBotRetryResult"
 components:
   parameters:
     Page:
@@ -1258,4 +1344,136 @@ components:
           type: array
           items: { $ref: "#/components/schemas/SupportTicket" }
       required: [revenueTodayUsd, ordersToday, pendingPayments, awaitingDelivery, openSupportTickets, lowStockProducts, activeFlashSales, newCustomers, recentOrders, recentPayments, recentTickets]
+    VenteBotCatalog:
+      type: object
+      properties:
+        connection:
+          $ref: "#/components/schemas/VenteBotConnectionStatus"
+        supplierProducts:
+          type: array
+          items: { $ref: "#/components/schemas/VenteBotCatalogProduct" }
+        localProducts:
+          type: array
+          items: { $ref: "#/components/schemas/VenteBotLocalProduct" }
+      required: [connection, supplierProducts, localProducts]
+    VenteBotConnectionStatus:
+      type: object
+      properties:
+        apiKeyConfigured: { type: boolean }
+        status: { type: string, enum: [not_configured, untested, connected, error] }
+        lastConnectionCheckAt: { type: ["string", "null"], format: date-time }
+        lastConnectionError: { type: ["string", "null"] }
+        walletBalanceUsd: { type: ["number", "null"] }
+        lastSyncedAt: { type: ["string", "null"], format: date-time }
+        activeSupplierProductCount: { type: integer }
+        failedFulfillmentCount: { type: integer }
+      required: [apiKeyConfigured, status, lastConnectionCheckAt, lastConnectionError, walletBalanceUsd, lastSyncedAt, activeSupplierProductCount, failedFulfillmentCount]
+    VenteBotCatalogProduct:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        description: { type: string }
+        emoji: { type: ["string", "null"] }
+        imageUrl: { type: ["string", "null"] }
+        priceUsd: { type: number }
+        standardPriceUsd: { type: ["number", "null"] }
+        pricingType: { type: string }
+        specialPriceExpiresAt: { type: ["string", "null"] }
+        warrantyDays: { type: integer }
+        deliveryType: { type: string }
+        stock: { type: ["integer", "null"] }
+        apiTest: { type: boolean }
+        catalogActive: { type: boolean }
+        lastSyncedAt: { type: string, format: date-time }
+        mappedProductId: { type: ["string", "null"], format: uuid }
+        mappedProductName: { type: ["string", "null"] }
+        resalePriceUsd: { type: ["number", "null"] }
+        expectedMarginUsd: { type: ["number", "null"] }
+        availability:
+          $ref: "#/components/schemas/VenteBotAvailability"
+      required: [id, name, description, emoji, imageUrl, priceUsd, standardPriceUsd, pricingType, specialPriceExpiresAt, warrantyDays, deliveryType, stock, apiTest, catalogActive, lastSyncedAt, mappedProductId, mappedProductName, resalePriceUsd, expectedMarginUsd, availability]
+    VenteBotAvailability:
+      type: object
+      properties:
+        available: { type: boolean }
+        quantity: { type: ["integer", "null"] }
+        reason:
+          type: ["string", "null"]
+          enum: [not_configured, inactive, test_product, activation_required, unsupported_delivery, stock_unknown, out_of_stock, null]
+      required: [available, quantity, reason]
+    VenteBotLocalProduct:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        nameEn: { type: string }
+        priceUsd: { type: number }
+        active: { type: boolean }
+        ventebotProductId: { type: ["integer", "null"] }
+      required: [id, nameEn, priceUsd, active, ventebotProductId]
+    VenteBotConnectionTest:
+      type: object
+      properties:
+        connected: { type: boolean }
+        checkedAt: { type: string, format: date-time }
+        walletBalanceUsd: { type: ["number", "null"] }
+        message: { type: string }
+      required: [connected, checkedAt, walletBalanceUsd, message]
+    VenteBotCatalogRefresh:
+      type: object
+      properties:
+        notModified: { type: boolean }
+        lastSyncedAt: { type: ["string", "null"], format: date-time }
+        supplierProductCount: { type: integer }
+      required: [notModified, lastSyncedAt, supplierProductCount]
+    VenteBotMappingInput:
+      type: object
+      properties:
+        productId: { type: ["string", "null"], format: uuid }
+        resalePriceUsd:
+          type: ["number", "null"]
+          minimum: 0
+          maximum: 9999999999.99
+          multipleOf: 0.01
+      required: [productId, resalePriceUsd]
+    VenteBotMappingResult:
+      type: object
+      properties:
+        supplierProductId: { type: integer }
+        productId: { type: ["string", "null"], format: uuid }
+        resalePriceUsd: { type: ["number", "null"] }
+        expectedMarginUsd: { type: ["number", "null"] }
+      required: [supplierProductId, productId, resalePriceUsd, expectedMarginUsd]
+    VenteBotOrderPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/VenteBotOrder" }
+      required: [items]
+    VenteBotOrder:
+      type: object
+      properties:
+        orderId: { type: string, format: uuid }
+        orderNumber: { type: string }
+        customerName: { type: string }
+        productName: { type: string }
+        supplierProductId: { type: integer }
+        providerOrderId: { type: ["integer", "null"] }
+        providerStatus: { type: ["string", "null"] }
+        status: { type: string, enum: [pending, submitting, awaiting_delivery, completed, failed] }
+        priceUsd: { type: number }
+        acquisitionCostUsd: { type: ["number", "null"] }
+        attempts: { type: integer }
+        lastError: { type: ["string", "null"] }
+        nextAttemptAt: { type: ["string", "null"], format: date-time }
+        createdAt: { type: string, format: date-time }
+        canRetry: { type: boolean }
+      required: [orderId, orderNumber, customerName, productName, supplierProductId, providerOrderId, providerStatus, status, priceUsd, acquisitionCostUsd, attempts, lastError, nextAttemptAt, createdAt, canRetry]
+    VenteBotRetryResult:
+      type: object
+      properties:
+        status: { type: string }
+        orderStatus: { type: ["string", "null"] }
+      required: [status, orderStatus]
 

@@ -29,6 +29,14 @@ export async function fulfillAutomaticOrder(
     ) {
       return { order: row.order, status: "waiting" };
     }
+    // Supplier-bound orders are delivered only by the persisted VenteBot job.
+    // Falling through to local stock or instructions could falsely complete them.
+    if (
+      row.order.ventebotProductId !== null ||
+      row.product.ventebotProductId !== null
+    ) {
+      return { order: row.order, status: "waiting" };
+    }
 
     let deliveryInfo = "";
     let acquisitionCostUsd: string | null = null;
