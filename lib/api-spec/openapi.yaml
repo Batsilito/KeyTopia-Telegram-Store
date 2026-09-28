@@ -487,6 +487,34 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CustomerPage"
+  /customers/{customerId}/wallet-adjustments:
+    post:
+      operationId: adjustCustomerWallet
+      tags: [customers]
+      summary: Add or deduct funds from a customer's wallet
+      parameters:
+        - in: path
+          name: customerId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CustomerWalletAdjustmentInput"
+      responses:
+        "200":
+          description: Wallet adjustment recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerWalletAdjustment"
+        "400": { description: Invalid wallet adjustment }
+        "401": { description: Authentication required }
+        "403": { description: Super admin access required }
+        "404": { description: Customer not found }
+        "409": { description: Insufficient wallet balance }
   /support/tickets:
     get:
       operationId: listSupportTickets
@@ -1107,6 +1135,24 @@ components:
         pageSize: { type: integer }
         total: { type: integer }
       required: [items, page, pageSize, total]
+    CustomerWalletAdjustmentInput:
+      type: object
+      properties:
+        operation: { type: string, enum: [add, deduct] }
+        amountUsd:
+          type: number
+          minimum: 0.01
+          maximum: 9999999999.99
+        reason: { type: string, minLength: 1, maxLength: 500 }
+      required: [operation, amountUsd, reason]
+    CustomerWalletAdjustment:
+      type: object
+      properties:
+        customerId: { type: string, format: uuid }
+        walletTransactionId: { type: string, format: uuid }
+        adjustmentUsd: { type: number }
+        walletBalanceUsd: { type: number }
+      required: [customerId, walletTransactionId, adjustmentUsd, walletBalanceUsd]
     Order:
       type: object
       properties:

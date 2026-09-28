@@ -2840,10 +2840,18 @@ async function payCheckoutWithWallet(
     if (!checkout) return { status: "unavailable" as const };
 
     const balanceRows = await tx
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.id, user.id))
+      .for("update")
+      .limit(1);
+    if (!balanceRows[0]) return { status: "unavailable" as const };
+
+    const walletBalanceRows = await tx
       .select({ balance: sum(walletTransactions.amountUsd) })
       .from(walletTransactions)
       .where(eq(walletTransactions.userId, user.id));
-    const balance = Number(balanceRows[0]?.balance ?? 0);
+    const balance = Number(walletBalanceRows[0]?.balance ?? 0);
     const amount = Number(checkout.checkout.priceUsd);
     if (!Number.isFinite(amount) || balance < amount) {
       return {

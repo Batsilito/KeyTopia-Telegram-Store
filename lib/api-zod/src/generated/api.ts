@@ -758,6 +758,34 @@ export const ListCustomersResponse = zod.object({
 
 
 /**
+ * @summary Add or deduct funds from a customer's wallet
+ */
+export const AdjustCustomerWalletParams = zod.object({
+  "customerId": zod.coerce.string().uuid()
+})
+
+export const adjustCustomerWalletBodyAmountUsdMin = 0.01;
+export const adjustCustomerWalletBodyAmountUsdMax = 9999999999.99;
+
+export const adjustCustomerWalletBodyReasonMax = 500;
+
+
+
+export const AdjustCustomerWalletBody = zod.object({
+  "operation": zod.enum(['add', 'deduct']),
+  "amountUsd": zod.number().min(adjustCustomerWalletBodyAmountUsdMin).max(adjustCustomerWalletBodyAmountUsdMax),
+  "reason": zod.string().min(1).max(adjustCustomerWalletBodyReasonMax)
+})
+
+export const AdjustCustomerWalletResponse = zod.object({
+  "customerId": zod.string().uuid(),
+  "walletTransactionId": zod.string().uuid(),
+  "adjustmentUsd": zod.number(),
+  "walletBalanceUsd": zod.number()
+})
+
+
+/**
  * @summary List support tickets
  */
 export const listSupportTicketsQueryPageDefault = 1;

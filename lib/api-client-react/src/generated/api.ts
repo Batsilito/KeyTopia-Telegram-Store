@@ -25,6 +25,8 @@ import type {
   AnalyticsSummary,
   BinanceApiDiagnostics,
   CustomerPage,
+  CustomerWalletAdjustment,
+  CustomerWalletAdjustmentInput,
   DashboardOverview,
   DeleteProductResult,
   DeliveryInput,
@@ -2233,6 +2235,95 @@ export function useListCustomers<TData = Awaited<ReturnType<typeof listCustomers
 
 
 
+
+export const getAdjustCustomerWalletUrl = (customerId: string,) => {
+
+
+
+
+  return `/api/customers/${customerId}/wallet-adjustments`
+}
+
+/**
+ * @summary Add or deduct funds from a customer's wallet
+ */
+export const adjustCustomerWallet = async (customerId: string,
+    customerWalletAdjustmentInput: CustomerWalletAdjustmentInput, options?: Parameters<typeof customFetch>[1]): Promise<CustomerWalletAdjustment> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<CustomerWalletAdjustment>(getAdjustCustomerWalletUrl(customerId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(customerWalletAdjustmentInput)
+  }
+);}
+
+
+
+
+
+export const getAdjustCustomerWalletMutationKey = () => ['adjustCustomerWallet'] as const;
+
+export const getAdjustCustomerWalletMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof adjustCustomerWallet>>, TError,AdjustCustomerWalletMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof adjustCustomerWallet>>, TError,AdjustCustomerWalletMutationVariables, TContext> => {
+
+const mutationKey = getAdjustCustomerWalletMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof adjustCustomerWallet>>, AdjustCustomerWalletMutationVariables> = (props) => {
+          const {customerId,data} = props ?? {};
+
+          return  adjustCustomerWallet(customerId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AdjustCustomerWalletMutationResult = NonNullable<Awaited<ReturnType<typeof adjustCustomerWallet>>>
+    export type AdjustCustomerWalletMutationBody = BodyType<CustomerWalletAdjustmentInput>
+    export type AdjustCustomerWalletMutationError = ErrorType<void>
+    export type AdjustCustomerWalletMutationVariables = {customerId: string;data: BodyType<CustomerWalletAdjustmentInput>}
+
+    /**
+ * @summary Add or deduct funds from a customer's wallet
+ */
+export const useAdjustCustomerWallet = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof adjustCustomerWallet>>, TError,AdjustCustomerWalletMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof adjustCustomerWallet>>,
+        TError,
+        AdjustCustomerWalletMutationVariables,
+        TContext
+      > => {
+      return useMutation(getAdjustCustomerWalletMutationOptions(options));
+    }
 
 export const getListSupportTicketsUrl = (params?: ListSupportTicketsParams,) => {
   const normalizedParams = new URLSearchParams();

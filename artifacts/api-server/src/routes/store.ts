@@ -2,6 +2,9 @@ import { Router, type IRouter, type Request, type Response } from "express";
 import { createHash, randomBytes } from "node:crypto";
 import {
   AdminLoginBody,
+  AdjustCustomerWalletBody,
+  AdjustCustomerWalletParams,
+  AdjustCustomerWalletResponse,
   CreateFlashSaleBody,
   StopFlashSaleParams,
   StopFlashSaleResponse,
@@ -59,6 +62,7 @@ import {
   users,
   ventebotOrderFulfillments,
   walletTopUps,
+  walletTransactions,
 } from "@workspace/db";
 import {
   authenticateAdmin,
@@ -94,6 +98,7 @@ import {
 } from "../lib/binance-topups";
 import { createVenteBotFulfillmentValues } from "../lib/ventebot-fulfillment";
 import { verifyVenteBotCheckoutPrice } from "../lib/ventebot-catalog-sync";
+import { formatUsdCents, MAX_USD_CENTS, parseUsdCents } from "../lib/wallet-adjustment";
 
 const router: IRouter = Router();
 
@@ -1351,6 +1356,17 @@ router.get("/customers", async (req, res) => {
   const total = await db.select({ total: count() }).from(users).where(condition);
   const orderCounts = rows.length ? await db.select({ userId: orders.userId, count: count(), value: sum(orders.priceUsd) }).from(orders).where(inArray(orders.userId, rows.map((row) => row.id))).groupBy(orders.userId) : [];
   const stats = new Map(orderCounts.map((row) => [row.userId, row]));
+  const walletRows = rows.length
+    ? await db
+      .select({
+        userId: walletTransactions.userId,
+        balance: sum(walletTransactions.amountUsd),
+      })
+      .from(walletTransactions)
+      .where(inArray(walletTransactions.userId, rows.map((row) => row.id)))
+      .groupBy(walletTransactions.userId)
+    : [];
+  const walletBalances = new Map(walletRows.map((row) => [row.userId, row.balance]));
   res.json({
     items: rows.map((row) => ({
       id: row.id,
@@ -1360,7 +1376,7 @@ router.get("/customers", async (req, res) => {
       language: row.language,
       orderCount: Number(stats.get(row.id)?.count ?? 0),
       lifetimeValueUsd: numberValue(stats.get(row.id)?.value),
-      walletBalanceUsd: 0,
+      walletBalanceUsd: numberValue(walletBalances.get(row.id)),
       joinedAt: row.createdAt.toISOString(),
       lastActivityAt: row.lastActivityAt.toISOString(),
     })),
@@ -1368,6 +1384,108 @@ router.get("/customers", async (req, res) => {
     pageSize: params.pageSize,
     total: Number(total[0]?.total ?? 0),
   });
+});
+
+router.post("/customers/:customerId/wallet-adjustments", async (req, res): Promise<void> => {
+  const admin = await requireAdmin(req, res);
+  if (!requireSuperAdmin(admin, res)) return;
+
+  const params = AdjustCustomerWalletParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: "Invalid customer" });
+    return;
+  }
+
+  const parsed = AdjustCustomerWalletBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid wallet adjustment" });
+    return;
+  }
+
+  const amountCents = parseUsdCents(parsed.data.amountUsd);
+  const reason = parsed.data.reason.trim();
+  if (
+    amountCents === null ||
+    amountCents <= 0n ||
+    amountCents > MAX_USD_CENTS ||
+    !reason
+  ) {
+    res.status(400).json({ error: "Enter a positive amount with up to two decimal places and a reason" });
+    return;
+  }
+
+  const adjustmentCents = parsed.data.operation === "add" ? amountCents : -amountCents;
+  const result = await db.transaction(async (tx) => {
+    const customerRows = await tx
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.id, params.data.customerId))
+      .for("update")
+      .limit(1);
+    if (!customerRows[0]) return { kind: "missing" as const };
+
+    const balanceRows = await tx
+      .select({ balance: sum(walletTransactions.amountUsd) })
+      .from(walletTransactions)
+      .where(eq(walletTransactions.userId, params.data.customerId));
+    const balanceCents = parseUsdCents(balanceRows[0]?.balance ?? "0");
+    if (balanceCents === null) {
+      throw new Error("Stored wallet balance is not a valid USD amount");
+    }
+    if (adjustmentCents < 0n && balanceCents < amountCents) {
+      return { kind: "insufficient" as const };
+    }
+
+    const walletRows = await tx
+      .insert(walletTransactions)
+      .values({
+        userId: params.data.customerId,
+        adminId: admin.id,
+        type: "admin_adjustment",
+        amountUsd: formatUsdCents(adjustmentCents),
+        reason: `Admin ${parsed.data.operation}: ${reason}`,
+      })
+      .returning({ id: walletTransactions.id });
+    const walletTransactionId = walletRows[0]?.id;
+    if (!walletTransactionId) throw new Error("Wallet adjustment was not recorded");
+
+    const newBalanceCents = balanceCents + adjustmentCents;
+    await tx.insert(auditLogs).values({
+      adminId: admin.id,
+      action: "customer_wallet_adjusted",
+      entityType: "customer_wallet",
+      entityId: params.data.customerId,
+      beforeValues: { walletBalanceUsd: formatUsdCents(balanceCents) },
+      afterValues: {
+        operation: parsed.data.operation,
+        amountUsd: formatUsdCents(amountCents),
+        walletBalanceUsd: formatUsdCents(newBalanceCents),
+        reason,
+      },
+    });
+
+    return {
+      kind: "adjusted" as const,
+      walletTransactionId,
+      newBalanceCents,
+    };
+  });
+
+  if (result.kind === "missing") {
+    res.status(404).json({ error: "Customer not found" });
+    return;
+  }
+  if (result.kind === "insufficient") {
+    res.status(409).json({ error: "Insufficient wallet balance" });
+    return;
+  }
+
+  res.json(AdjustCustomerWalletResponse.parse({
+    customerId: params.data.customerId,
+    walletTransactionId: result.walletTransactionId,
+    adjustmentUsd: Number(formatUsdCents(adjustmentCents)),
+    walletBalanceUsd: Number(formatUsdCents(result.newBalanceCents)),
+  }));
 });
 
 async function listTicketRows(limit = 20, status?: string) {

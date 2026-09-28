@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import {
-  useAdminLogin, useAdminLogout, useConfirmPayment, useCreateFlashSale, useStopFlashSale, useCreateProduct, useDeleteProduct,
+  useAdminLogin, useAdminLogout, useAdjustCustomerWallet, useConfirmPayment, useCreateFlashSale, useStopFlashSale, useCreateProduct, useDeleteProduct,
   useCreatePromoCode, useDeliverOrder, useDisableInventory, useGetAdminSession,
   useGetAnalyticsSummary, useGetDashboardOverview, useGetInventorySummary, useGetStoreSettings,
   useImportInventory, useListCustomers, useListFlashSales, useListInventory, useListOrders,
@@ -850,7 +850,109 @@ function PromoCodes() {
   return <div className="animate-rise"><PageIntro eyebrow="Retention levers" title="Promo codes" description="Keep promotion rules legible for the team and bounded for the business." action={<Button onClick={() => setOpen(true)} data-testid="button-new-promo-code"><Plus size={16} /> Create code</Button>} /><Card>{query.isLoading ? <LoadingBlock /> : query.isError ? <ErrorState retry={() => query.refetch()} /> : query.data?.length ? <div className="grid gap-px bg-border md:grid-cols-2 xl:grid-cols-3">{query.data.map((promo: any) => <div key={promo.id} className="bg-card p-5" data-testid={`card-promo-${promo.id}`}><div className="flex items-start justify-between"><div className="rounded-xl bg-primary/10 p-2.5 text-primary"><Percent size={18} /></div><Badge tone={promo.active ? 'green' : 'neutral'}>{promo.active ? 'Active' : 'Inactive'}</Badge></div><p className="mt-5 font-mono text-lg font-bold tracking-wider">{promo.code}</p><p className="mt-2 text-2xl font-extrabold">{promo.discountType === 'percentage' ? `${promo.value}%` : money(promo.value)} <span className="text-xs font-bold text-muted-foreground">off</span></p><div className="mt-5 flex justify-between border-t border-border pt-4 text-xs text-muted-foreground"><span>{promo.usedCount} used{promo.maxUses ? ` of ${promo.maxUses}` : ''}</span><span>{promo.expiresAt ? `Expires ${date(promo.expiresAt)}` : 'No expiry'}</span></div></div>)}</div> : <EmptyState icon={Percent} title="No promotion codes" body="Create a bounded offer for a specific campaign or customer cohort." action={<Button onClick={() => setOpen(true)}><Plus size={15} /> Create code</Button>} />}</Card>{open && <Modal title="Create promo code" onClose={() => setOpen(false)}><div className="grid gap-4 md:grid-cols-2"><Field label="Code"><Input value={form.code} onChange={(e) => set('code', e.target.value.toUpperCase())} placeholder="RAMADAN15" data-testid="input-promo-code" /></Field><Field label="Discount type"><Select value={form.discountType} onChange={(e) => set('discountType', e.target.value)}><option value="percentage">Percentage</option><option value="fixed_usd">Fixed USD</option></Select></Field><Field label="Value"><Input type="number" min="0" value={form.value} onChange={(e) => set('value', Number(e.target.value))} /></Field><Field label="Maximum uses" hint="Leave blank for unlimited"><Input type="number" min="1" value={form.maxUses} onChange={(e) => set('maxUses', e.target.value)} /></Field><Field label="Expires at"><Input type="datetime-local" value={form.expiresAt} onChange={(e) => set('expiresAt', e.target.value)} /></Field></div><div className="mt-5 flex justify-end gap-2"><Button variant="secondary" onClick={() => setOpen(false)}>Cancel</Button><Button disabled={!form.code.trim() || create.isPending} onClick={() => create.mutate({ data: { code: form.code, discountType: form.discountType, value: Number(form.value), maxUses: form.maxUses ? Number(form.maxUses) : null, expiresAt: form.expiresAt ? new Date(form.expiresAt).toISOString() : null, active: true } }, { onSuccess: () => { setOpen(false); qc.invalidateQueries({ queryKey: getListPromoCodesQueryKey() }); } })} data-testid="button-save-promo-code"><Check size={15} /> Create code</Button></div></Modal>}</div>;
 }
 
-function Customers() { const [search, setSearch] = useState(''); const query = useListCustomers({ page: 1, pageSize: 50, search: search || undefined }); return <div className="animate-rise"><PageIntro eyebrow="Customer health" title="Customers" description="See who is buying, returning, and building value inside the storefront." /><Card><div className="border-b border-border p-4"><div className="relative max-w-md"><Search className="absolute left-3 top-2.5 text-muted-foreground" size={16} /><Input className="pl-9" placeholder="Search name or Telegram username" value={search} onChange={(e) => setSearch(e.target.value)} data-testid="input-search-customers" /></div></div>{query.isLoading ? <LoadingBlock /> : query.isError ? <ErrorState retry={() => query.refetch()} /> : query.data?.items.length ? <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-muted/55 text-[10px] uppercase tracking-[.12em] text-muted-foreground"><tr><th className="px-5 py-3">Customer</th><th className="px-4 py-3">Language</th><th className="px-4 py-3">Orders</th><th className="px-4 py-3">Lifetime value</th><th className="px-4 py-3">Wallet</th><th className="px-5 py-3">Last activity</th></tr></thead><tbody className="divide-y divide-border">{query.data.items.map((customer: any) => <tr key={customer.id} className="hover:bg-muted/30" data-testid={`row-customer-${customer.id}`}><td className="px-5 py-4"><div className="flex items-center gap-3"><div className="grid h-9 w-9 place-items-center rounded-full bg-primary/10 text-xs font-black text-primary">{initials(customer.displayName)}</div><div><p className="font-bold">{customer.displayName}</p><p className="mt-1 font-mono text-[10px] text-muted-foreground">{customer.username ? `@${customer.username}` : customer.telegramUserId}</p></div></div></td><td className="px-4 py-4"><Badge tone="neutral">{customer.language}</Badge></td><td className="px-4 py-4 font-mono font-bold">{customer.orderCount}</td><td className="px-4 py-4 font-mono font-bold text-primary">{money(customer.lifetimeValueUsd)}</td><td className="px-4 py-4 font-mono">{money(customer.walletBalanceUsd)}</td><td className="px-5 py-4 text-xs text-muted-foreground">{date(customer.lastActivityAt)}</td></tr>)}</tbody></table></div> : <EmptyState icon={Users} title="No customers found" body="Try a different search term." />}</Card></div>; }
+function WalletAdjustmentModal({ customer, onClose }: { customer: any; onClose: () => void }) {
+  const adjust = useAdjustCustomerWallet();
+  const qc = useQueryClient();
+  const [operation, setOperation] = useState<'add' | 'deduct'>('add');
+  const [amount, setAmount] = useState('');
+  const [reason, setReason] = useState('');
+  const validAmount = /^\d+(?:\.\d{1,2})?$/.test(amount)
+    && Number(amount) > 0
+    && Number(amount) <= 9999999999.99;
+
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!validAmount || !reason.trim() || adjust.isPending) return;
+    adjust.mutate({
+      customerId: customer.id,
+      data: { operation, amountUsd: Number(amount), reason: reason.trim() },
+    }, {
+      onSuccess: () => {
+        void qc.invalidateQueries({ queryKey: getListCustomersQueryKey() });
+        onClose();
+      },
+    });
+  };
+
+  return <Modal title={`Adjust wallet · ${customer.displayName}`} onClose={onClose}>
+    <div className="mb-5 flex items-center justify-between gap-4 rounded-xl bg-muted/60 p-4">
+      <div><p className="text-xs font-bold uppercase tracking-[.08em] text-muted-foreground">Current balance</p><p className="mt-1 font-mono text-xl font-extrabold">{money(customer.walletBalanceUsd)}</p></div>
+      <Badge tone="blue">USDT</Badge>
+    </div>
+    <p className="mb-4 text-sm leading-6 text-muted-foreground">Each change is recorded in the wallet ledger. Deductions cannot exceed the current balance.</p>
+    <form onSubmit={submit} className="space-y-4">
+      <Field label="Adjustment">
+        <Select value={operation} onChange={(event) => setOperation(event.target.value as 'add' | 'deduct')} data-testid="select-wallet-adjustment-operation">
+          <option value="add">Add funds</option>
+          <option value="deduct">Deduct funds</option>
+        </Select>
+      </Field>
+      <Field label="Amount (USD)" hint="Use up to two decimal places.">
+        <Input type="number" min="0.01" max="9999999999.99" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="0.00" data-testid="input-wallet-adjustment-amount" />
+      </Field>
+      <Field label="Reason" hint="This will be saved in the ledger and admin audit log.">
+        <Textarea value={reason} onChange={(event) => setReason(event.target.value)} maxLength={500} placeholder="e.g. Customer service credit" data-testid="textarea-wallet-adjustment-reason" />
+      </Field>
+      {adjust.isError && <div role="alert" className="rounded-lg bg-destructive/10 px-3 py-2.5 text-sm font-bold text-destructive" data-testid="status-wallet-adjustment-error">{adjust.error instanceof Error ? adjust.error.message : 'Wallet adjustment failed.'}</div>}
+      <div className="flex justify-end gap-2 pt-1">
+        <Button variant="secondary" type="button" onClick={onClose} disabled={adjust.isPending}>Cancel</Button>
+        <Button type="submit" disabled={!validAmount || !reason.trim() || adjust.isPending} data-testid="button-submit-wallet-adjustment">
+          {adjust.isPending ? 'Saving...' : operation === 'add' ? 'Add funds' : 'Deduct funds'}
+        </Button>
+      </div>
+    </form>
+  </Modal>;
+}
+
+function Customers() {
+  const [search, setSearch] = useState('');
+  const [walletCustomer, setWalletCustomer] = useState<any>(null);
+  const query = useListCustomers({ page: 1, pageSize: 50, search: search || undefined });
+  const session = useGetAdminSession({ query: { queryKey: getGetAdminSessionQueryKey(), staleTime: 60_000 } });
+  const canAdjustWallet = session.data?.admin?.role === 'super_admin';
+
+  return <div className="animate-rise">
+    <PageIntro eyebrow="Customer health" title="Customers" description="See who is buying, returning, and building value inside the storefront." />
+    <Card>
+      <div className="border-b border-border p-4">
+        <div className="relative max-w-md">
+          <Search className="absolute left-3 top-2.5 text-muted-foreground" size={16} />
+          <Input className="pl-9" placeholder="Search name or Telegram username" value={search} onChange={(event) => setSearch(event.target.value)} data-testid="input-search-customers" />
+        </div>
+      </div>
+      {query.isLoading ? <LoadingBlock /> : query.isError ? <ErrorState retry={() => query.refetch()} /> : query.data?.items.length
+        ? <div className="overflow-x-auto">
+          <table className="w-full min-w-[850px] text-left text-sm">
+            <thead className="bg-muted/55 text-[10px] uppercase tracking-[.12em] text-muted-foreground">
+              <tr><th className="px-5 py-3">Customer</th><th className="px-4 py-3">Language</th><th className="px-4 py-3">Orders</th><th className="px-4 py-3">Lifetime value</th><th className="px-4 py-3">Wallet balance</th><th className="px-5 py-3">Last activity</th></tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {query.data.items.map((customer: any) => <tr key={customer.id} className="hover:bg-muted/30" data-testid={`row-customer-${customer.id}`}>
+                <td className="px-5 py-4">
+                  <div className="flex items-center gap-3">
+                    <div className="grid h-9 w-9 place-items-center rounded-full bg-primary/10 text-xs font-black text-primary">{initials(customer.displayName)}</div>
+                    <div><p className="font-bold">{customer.displayName}</p><p className="mt-1 font-mono text-[10px] text-muted-foreground">{customer.username ? `@${customer.username}` : customer.telegramUserId}</p></div>
+                  </div>
+                </td>
+                <td className="px-4 py-4"><Badge tone="neutral">{customer.language}</Badge></td>
+                <td className="px-4 py-4 font-mono font-bold">{customer.orderCount}</td>
+                <td className="px-4 py-4 font-mono font-bold text-primary">{money(customer.lifetimeValueUsd)}</td>
+                <td className="px-4 py-4">
+                  <div className="flex items-center gap-3">
+                    <span className="font-mono font-bold">{money(customer.walletBalanceUsd)}</span>
+                    {canAdjustWallet && <Button variant="quiet" className="px-2 py-1 text-[11px]" onClick={() => setWalletCustomer(customer)} aria-label={`Adjust wallet for ${customer.displayName}`} data-testid={`button-adjust-wallet-${customer.id}`}><WalletCards size={13} /> Adjust</Button>}
+                  </div>
+                </td>
+                <td className="px-5 py-4 text-xs text-muted-foreground">{date(customer.lastActivityAt)}</td>
+              </tr>)}
+            </tbody>
+          </table>
+        </div>
+        : <EmptyState icon={Users} title="No customers found" body="Try a different search term." />}
+    </Card>
+    {walletCustomer && <WalletAdjustmentModal customer={walletCustomer} onClose={() => setWalletCustomer(null)} />}
+  </div>;
+}
 
 function SupportConversationModal({ ticketId, onClose }: { ticketId: string; onClose: () => void }) {
   const query = useGetSupportTicket(ticketId);

@@ -345,6 +345,35 @@ export interface CustomerPage {
   total: number;
 }
 
+export type CustomerWalletAdjustmentInputOperation = typeof CustomerWalletAdjustmentInputOperation[keyof typeof CustomerWalletAdjustmentInputOperation];
+
+
+export const CustomerWalletAdjustmentInputOperation = {
+  add: 'add',
+  deduct: 'deduct',
+} as const;
+
+export interface CustomerWalletAdjustmentInput {
+  operation: CustomerWalletAdjustmentInputOperation;
+  /**
+     * @minimum 0.01
+     * @maximum 9999999999.99
+     */
+  amountUsd: number;
+  /**
+     * @minLength 1
+     * @maxLength 500
+     */
+  reason: string;
+}
+
+export interface CustomerWalletAdjustment {
+  customerId: string;
+  walletTransactionId: string;
+  adjustmentUsd: number;
+  walletBalanceUsd: number;
+}
+
 export type OrderPaymentMethod = typeof OrderPaymentMethod[keyof typeof OrderPaymentMethod];
 
 
