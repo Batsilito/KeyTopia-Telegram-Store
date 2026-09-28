@@ -1,7 +1,7 @@
 - [Telegram bot bundling](grammy-bundling.md) — keep grammY external to the API esbuild bundle so its optional Node platform module resolves at runtime.
 - [Telegram webhook routing](telegram-webhook-routing.md) — in this multi-artifact deployment, external Telegram callbacks must use the API artifact’s `/api` prefix.
 - [Telegram webhook idempotency](telegram-webhook-idempotency.md) — duplicate submitted transaction IDs must be acknowledged, not thrown, or Telegram retries can block the update queue.
-- [Store schema database](neon-schema-migrations.md) — this app’s runtime schema is on Neon_Connection; the separate Replit database is not the store database.
+- [Store schema database](neon-schema-migrations.md) — Neon is primary; avoid Drizzle pushes that propose dropping unmodeled payment-monitor tables.
 - [Binance SAPI runtime restriction](binance-sapi-runtime.md) — official Binance hosts return HTTP 451 from the current runtime; never auto-approve without verified history.
 - [VenteBot supplier fulfillment](ventebot-supplier-fulfillment.md) — use one idempotency key per order and deliver only after all provider items are confirmed.
 - [VenteBot catalog health](ventebot-catalog-health.md) — a successful reseller-account check does not prove the supplier catalog synced; validate catalog health separately.
