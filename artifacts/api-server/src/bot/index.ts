@@ -65,6 +65,13 @@ import { createOrderDeliveryMessage } from "./order-delivery-message";
 import { createOrderPaymentConfirmationMessage } from "./order-payment-confirmation-message";
 import { createWelcomeMessage } from "./welcome-message";
 import { ObjectStorageService } from "../lib/objectStorage";
+import {
+  getCheckoutPromoPricing,
+  redeemPromoCodeReservation,
+  releasePromoCodeReservation,
+  removePromoCodeFromCheckout,
+  reservePromoCodeForCheckout,
+} from "../lib/promo-codes";
 
 export const telegramBotToken = process.env.TELEGRAM_BOT_TOKEN;
 export const telegramBot = telegramBotToken ? new Bot(telegramBotToken) : null;
@@ -78,6 +85,7 @@ const flashSaleReminderAt = new Map<string, number>();
 const BINANCE_POLL_INTERVAL_MS = 5_000;
 const BINANCE_SUBMISSION_RETRY_DELAYS_MS = [250, 1_000, 2_500, 5_000, 10_000, 20_000] as const;
 const verificationAnimationTimers = new Map<string, ReturnType<typeof setInterval>>();
+const promoCodeInputs = new Map<string, string>();
 
 export async function validateTelegramCustomEmojiId(
   value: string | null | undefined,
@@ -840,6 +848,7 @@ export async function releaseExpiredCheckouts() {
         .where(and(eq(checkoutSessions.id, checkout.id), eq(checkoutSessions.status, "pending")))
         .returning({ id: checkoutSessions.id });
       if (!cancelled[0]) return;
+      await releasePromoCodeReservation(tx, checkout.id);
       const reservations = await tx.update(inventoryReservations)
         .set({ releasedAt: new Date() })
         .where(and(eq(inventoryReservations.checkoutSessionId, checkout.id), isNull(inventoryReservations.releasedAt)))
@@ -2541,6 +2550,170 @@ async function acceptCustomQuantity(
   return true;
 }
 
+async function showCheckoutSummary(
+  ctx: Context,
+  user: typeof users.$inferSelect,
+  checkout: typeof checkoutSessions.$inferSelect,
+  notice?: string,
+) {
+  const language = languageOf(user);
+  const [methods, pricing] = await Promise.all([
+    db
+      .select()
+      .from(paymentMethods)
+      .where(and(eq(paymentMethods.enabled, true), ne(paymentMethods.method, "instapay"))),
+    getCheckoutPromoPricing(checkout.id, checkout.priceUsd),
+  ]);
+  const keyboard = new InlineKeyboard()
+    .text(paymentMethodLabel("wallet", language), `method:${checkout.id}:wallet`)
+    .row();
+  for (const method of methods) {
+    keyboard
+      .text(paymentMethodLabel(method.method, language), `method:${checkout.id}:${method.method}`)
+      .row();
+  }
+  keyboard
+    .text(
+      t(language, pricing.code ? "changePromoCode" : "applyPromoCode"),
+      `promo:apply:${checkout.id}`,
+    )
+    .row();
+  if (pricing.code) {
+    keyboard.text(t(language, "removePromoCode"), `promo:remove:${checkout.id}`).row();
+  }
+  keyboard
+    .text(t(language, "cancelOrder"), `checkout:cancel:${checkout.id}`)
+    .text(t(language, "support"), "nav:support");
+
+  const unitPrice = (Number(checkout.priceUsd) / checkout.quantity).toFixed(2);
+  const timeoutMinutes = Math.max(
+    1,
+    Math.ceil((checkout.expiresAt.getTime() - Date.now()) / 60_000),
+  );
+  const summary = [
+    notice ? escapeHtml(notice) : "",
+    `<b>${t(language, "orderCreated")}</b>`,
+    "",
+    `🧩 <b>${t(language, "product")}:</b> ${escapeHtml(checkout.productNameSnapshot)}`,
+    `➕ <b>${t(language, "quantity")}:</b> ${checkout.quantity}`,
+    `💲 <b>${t(language, "unitPrice")}:</b> ${unitPrice} USDT`,
+    `📊 <b>${t(language, "subtotal")}:</b> ${pricing.subtotalUsd} USDT`,
+    ...(pricing.code
+      ? [
+          `🏷️ <b>${t(language, "promoCodeLabel")}:</b> ${escapeHtml(pricing.code)}`,
+          `➖ <b>${t(language, "promoCodeDiscount")}:</b> -${pricing.discountUsd} USDT`,
+        ]
+      : []),
+    `💰 <b>${t(language, "total")}:</b> ${pricing.totalUsd} USDT`,
+    `🏪 <b>${t(language, "seller")}:</b> KeyTopia`,
+    `📁 <b>${t(language, "shopOrder")}:</b> ${escapeHtml(checkout.reference)}`,
+    "",
+    `<b>${t(language, "paymentMethodsHeader")}</b>`,
+    `• <b>${escapeHtml(paymentMethodLabel("wallet", language))}</b> ${escapeHtml(paymentMethodDescription("wallet", language))}`,
+    ...methods.map(
+      (method) =>
+        `• <b>${escapeHtml(paymentMethodLabel(method.method, language))}</b> ${escapeHtml(paymentMethodDescription(method.method, language))}`,
+    ),
+    "",
+    `⏱ <b>${t(language, "paymentWindow")}:</b> ${timeoutMinutes} minutes`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+  await replaceCallbackMessage(ctx, summary, {
+    parse_mode: "HTML",
+    reply_markup: keyboard,
+  });
+}
+
+async function refreshCheckoutSummary(
+  ctx: Context,
+  user: typeof users.$inferSelect,
+  checkoutId: string,
+  notice?: string,
+) {
+  const rows = await db
+    .select()
+    .from(checkoutSessions)
+    .where(
+      and(
+        eq(checkoutSessions.id, checkoutId),
+        eq(checkoutSessions.userId, user.id),
+        eq(checkoutSessions.status, "pending"),
+        isNull(checkoutSessions.paymentMethod),
+        gt(checkoutSessions.expiresAt, new Date()),
+      ),
+    )
+    .limit(1);
+  if (!rows[0]) {
+    await ctx.reply(t(languageOf(user), "promoCodeCheckoutUnavailable"));
+    return false;
+  }
+  await showCheckoutSummary(ctx, user, rows[0], notice);
+  return true;
+}
+
+async function promptForPromoCode(
+  ctx: Context,
+  user: typeof users.$inferSelect,
+  checkoutId: string,
+) {
+  const refreshed = await refreshCheckoutSummary(ctx, user, checkoutId);
+  if (!refreshed) return;
+  promoCodeInputs.set(user.id, checkoutId);
+  await ctx.reply(t(languageOf(user), "promoCodePrompt"), {
+    reply_markup: new InlineKeyboard()
+      .text(t(languageOf(user), "promoCodePromptCancel"), `promo:cancel:${checkoutId}`),
+  });
+}
+
+async function acceptPromoCodeInput(
+  ctx: Context,
+  user: typeof users.$inferSelect,
+  value: string,
+) {
+  const checkoutId = promoCodeInputs.get(user.id);
+  if (!checkoutId) return false;
+  const normalizedInput = value.trim();
+  const language = languageOf(user);
+  if (
+    normalizedInput.startsWith("/") ||
+    normalizedInput === t(language, "menu") ||
+    normalizedInput === t(language, "home") ||
+    normalizedInput === t(language, "mainMenu")
+  ) {
+    promoCodeInputs.delete(user.id);
+    return false;
+  }
+
+  const result = await reservePromoCodeForCheckout({
+    checkoutSessionId: checkoutId,
+    userId: user.id,
+    code: normalizedInput,
+  });
+  if (!result.ok) {
+    if (result.reason === "checkout_unavailable") {
+      promoCodeInputs.delete(user.id);
+      await ctx.reply(t(language, "promoCodeCheckoutUnavailable"));
+      return true;
+    }
+    const message =
+      result.reason === "ineligible"
+        ? t(language, "promoCodeIneligible")
+        : result.reason === "limit_reached"
+          ? t(language, "promoCodeLimitReached")
+          : t(language, "promoCodeInvalid");
+    await ctx.reply(message);
+    return true;
+  }
+
+  promoCodeInputs.delete(user.id);
+  const notice = t(language, "promoCodeApplied")
+    .replace("{code}", result.code)
+    .replace("{discount}", result.discountUsd);
+  await refreshCheckoutSummary(ctx, user, checkoutId, notice);
+  return true;
+}
+
 async function beginCheckout(
   ctx: Context,
   user: typeof users.$inferSelect,
@@ -2636,42 +2809,7 @@ async function beginCheckout(
     await ctx.reply(t(languageOf(user), "outOfStock"));
     return;
   }
-  const methods = await db
-    .select()
-    .from(paymentMethods)
-    .where(and(eq(paymentMethods.enabled, true), ne(paymentMethods.method, "instapay")));
-  const language = languageOf(user);
-  const keyboard = new InlineKeyboard();
-  keyboard
-    .text(paymentMethodLabel("wallet", language), `method:${checkout[0].id}:wallet`)
-    .row();
-  for (const method of methods) {
-    keyboard.text(paymentMethodLabel(method.method, language), `method:${checkout[0].id}:${method.method}`).row();
-  }
-  keyboard
-    .text(t(language, "cancelOrder"), `checkout:cancel:${checkout[0].id}`)
-    .text(t(language, "support"), "nav:support");
-  const productName = product.nameEn;
-  const methodLines = [
-    `• <b>${escapeHtml(paymentMethodLabel("wallet", language))}</b> ${escapeHtml(paymentMethodDescription("wallet", language))}`,
-    ...methods.map((method) => `• <b>${escapeHtml(paymentMethodLabel(method.method, language))}</b> ${escapeHtml(paymentMethodDescription(method.method, language))}`),
-  ];
-  const summary = [
-    `<b>${t(language, "orderCreated")}</b>`,
-    "",
-    `🧩 <b>${t(language, "product")}:</b> ${escapeHtml(productName)}`,
-    `➕ <b>${t(language, "quantity")}:</b> ${quantity}`,
-    `💲 <b>${t(language, "unitPrice")}:</b> ${price} USDT${sale ? " ⚡" : ""}`,
-    `💰 <b>${t(language, "total")}:</b> ${total} USDT`,
-    `🏪 <b>${t(language, "seller")}:</b> KeyTopia`,
-    `📁 <b>${t(language, "shopOrder")}:</b> ${reference}`,
-    "",
-    `<b>${t(language, "paymentMethodsHeader")}</b>`,
-    ...methodLines,
-    "",
-    `⏱ <b>${t(language, "paymentWindow")}:</b> ${timeoutMinutes} minutes`,
-  ].join("\n");
-  await replaceCallbackMessage(ctx, summary, { parse_mode: "HTML", reply_markup: keyboard });
+  await showCheckoutSummary(ctx, user, checkout[0]);
 }
 
 async function cancelCheckoutSession(checkoutId: string, userId: string) {
@@ -2688,6 +2826,7 @@ async function cancelCheckoutSession(checkoutId: string, userId: string) {
     )
     .returning({ id: checkoutSessions.id });
     if (!rows[0]) return rows;
+    await releasePromoCodeReservation(tx, checkoutId);
     const released = await tx.update(inventoryReservations)
       .set({ releasedAt: new Date() })
       .where(and(eq(inventoryReservations.checkoutSessionId, checkoutId), isNull(inventoryReservations.releasedAt)))
@@ -2743,6 +2882,7 @@ async function ensureCheckoutPriceIsCurrent(
 }
 
 async function cancelCheckout(ctx: Context, user: typeof users.$inferSelect, checkoutId: string) {
+  if (promoCodeInputs.get(user.id) === checkoutId) promoCodeInputs.delete(user.id);
   const cancelled = await cancelCheckoutSession(checkoutId, user.id);
   await replaceCallbackMessage(
     ctx,
@@ -2802,6 +2942,11 @@ async function payCheckoutWithWallet(
       .limit(1);
     const checkout = rows[0];
     if (!checkout) return { status: "unavailable" as const };
+    const pricing = await getCheckoutPromoPricing(
+      checkout.checkout.id,
+      checkout.checkout.priceUsd,
+      tx,
+    );
 
     const balanceRows = await tx
       .select({ id: users.id })
@@ -2816,7 +2961,7 @@ async function payCheckoutWithWallet(
       .from(walletTransactions)
       .where(eq(walletTransactions.userId, user.id));
     const balance = Number(walletBalanceRows[0]?.balance ?? 0);
-    const amount = Number(checkout.checkout.priceUsd);
+    const amount = Number(pricing.totalUsd);
     if (!Number.isFinite(amount) || balance < amount) {
       return {
         status: "insufficient" as const,
@@ -2856,7 +3001,7 @@ async function payCheckoutWithWallet(
         durationSnapshot: checkout.checkout.durationSnapshot,
         warrantySnapshot: checkout.checkout.warrantySnapshot,
         quantity: checkout.checkout.quantity,
-        priceUsd: checkout.checkout.priceUsd,
+        priceUsd: pricing.totalUsd,
         egpAmount: null,
         exchangeRate: null,
         paymentMethod: "wallet",
@@ -2867,6 +3012,11 @@ async function payCheckoutWithWallet(
       .returning();
     const order = orderRows[0];
     if (!order) throw new Error("Unable to create wallet-paid order");
+    await redeemPromoCodeReservation(tx, {
+      checkoutSessionId: checkout.checkout.id,
+      userId: user.id,
+      orderId: order.id,
+    });
     if (checkout.checkout.ventebotProductId !== null) {
       await tx
         .insert(ventebotOrderFulfillments)
@@ -2882,7 +3032,7 @@ async function payCheckoutWithWallet(
       orderId: order.id,
       userId: user.id,
       paymentMethod: "wallet",
-      usdAmount: checkout.checkout.priceUsd,
+      usdAmount: pricing.totalUsd,
       transactionReference: `wallet:${order.orderNumber}`,
       status: "confirmed",
       submittedAt: now,
@@ -2952,13 +3102,24 @@ async function showPayment(
   }
   const instructions = config[0].instructionsEn;
   const recipientUid = config[0].paymentIdentifier?.trim();
-  const exactAmount = Number(checkout[0].priceUsd).toFixed(2);
+  const pricing = await getCheckoutPromoPricing(
+    checkout[0].id,
+    checkout[0].priceUsd,
+  );
+  const exactAmount = pricing.totalUsd;
   const details = method === "binance" && recipientUid
     ? [
         `<b>${t(language, "binancePaymentTitle")}</b>`,
         "",
         `${t(language, "binanceProductLabel")}: ⭕️ ${escapeHtml(checkout[0].productNameSnapshot)}`,
         `${t(language, "binanceQuantityLabel")}: ${checkout[0].quantity}`,
+        `${t(language, "subtotal")}: ${pricing.subtotalUsd} USDT`,
+        ...(pricing.code
+          ? [
+              `${t(language, "promoCodeLabel")}: ${escapeHtml(pricing.code)}`,
+              `${t(language, "promoCodeDiscount")}: -${pricing.discountUsd} USDT`,
+            ]
+          : []),
         `${t(language, "binanceAmountLabel")}: <b>${exactAmount} USDT</b>`,
         "",
         `<b>${t(language, "binanceRecipientLabel")}:</b>`,
@@ -2976,7 +3137,14 @@ async function showPayment(
         escapeHtml(instructions),
         `Reference: ${escapeHtml(checkout[0].reference)}`,
         `${t(language, "quantity")}: ${checkout[0].quantity}`,
-        `${t(language, "price")}: ${checkout[0].priceUsd} USDT`,
+        `${t(language, "subtotal")}: ${pricing.subtotalUsd} USDT`,
+        ...(pricing.code
+          ? [
+              `${t(language, "promoCodeLabel")}: ${escapeHtml(pricing.code)}`,
+              `${t(language, "promoCodeDiscount")}: -${pricing.discountUsd} USDT`,
+            ]
+          : []),
+        `${t(language, "total")}: <b>${pricing.totalUsd} USDT</b>`,
         recipientUid ? `Recipient: ${escapeHtml(recipientUid)}` : "",
       ].filter(Boolean).join("\n");
   const logoPath = paymentLogoPath(method);
@@ -3006,6 +3174,10 @@ async function showPayment(
 async function acceptPaymentReference(ctx: Context, user: typeof users.$inferSelect, reference: string) {
   const checkout = await db.select().from(checkoutSessions).where(and(eq(checkoutSessions.userId, user.id), eq(checkoutSessions.status, "pending"), gt(checkoutSessions.expiresAt, new Date()))).orderBy(desc(checkoutSessions.createdAt)).limit(1);
   if (!checkout[0] || !checkout[0].paymentMethod) return false;
+  const pricing = await getCheckoutPromoPricing(
+    checkout[0].id,
+    checkout[0].priceUsd,
+  );
   const submittedReference = reference.trim();
   if (checkout[0].paymentMethod === "binance" && !/^\S{6,128}$/.test(submittedReference)) {
     await ctx.reply(t(languageOf(user), "invalidBinanceTransactionId"));
@@ -3037,7 +3209,7 @@ async function acceptPaymentReference(ctx: Context, user: typeof users.$inferSel
           checkoutSessionId: checkout[0].id,
           userId: user.id,
           paymentMethod: checkout[0].paymentMethod!,
-          usdAmount: checkout[0].priceUsd,
+          usdAmount: pricing.totalUsd,
           transactionReference: submittedReference,
           status: "verification_failed",
           verificationFailureReason: reason,
@@ -3067,7 +3239,7 @@ async function acceptPaymentReference(ctx: Context, user: typeof users.$inferSel
         checkoutSessionId: checkout[0].id,
         userId: user.id,
         paymentMethod: checkout[0].paymentMethod!,
-        usdAmount: checkout[0].priceUsd,
+        usdAmount: pricing.totalUsd,
         transactionReference: submittedReference,
         status: "submitted",
         submittedAt: new Date(),
@@ -3086,7 +3258,7 @@ async function acceptPaymentReference(ctx: Context, user: typeof users.$inferSel
       `product-payment:${submitted.id}:verification`,
       {
         paymentKind: "order",
-        amountUsd: checkout[0].priceUsd,
+          amountUsd: pricing.totalUsd,
         transactionId: submittedReference,
       },
     );
@@ -3186,6 +3358,27 @@ export function buildTelegramBot() {
     }
     if (data === "nav:home") {
       if (await ensureAccess(ctx, user)) await showHome(ctx, user, true);
+      return;
+    }
+    if (data.startsWith("promo:apply:")) {
+      await promptForPromoCode(ctx, user, data.slice("promo:apply:".length));
+      return;
+    }
+    if (data.startsWith("promo:remove:")) {
+      const checkoutId = data.slice("promo:remove:".length);
+      if (promoCodeInputs.get(user.id) === checkoutId) promoCodeInputs.delete(user.id);
+      const removed = await removePromoCodeFromCheckout(checkoutId, user.id);
+      if (!removed) {
+        await refreshCheckoutSummary(ctx, user, checkoutId);
+        return;
+      }
+      await refreshCheckoutSummary(ctx, user, checkoutId, t(languageOf(user), "promoCodeRemoved"));
+      return;
+    }
+    if (data.startsWith("promo:cancel:")) {
+      const checkoutId = data.slice("promo:cancel:".length);
+      if (promoCodeInputs.get(user.id) === checkoutId) promoCodeInputs.delete(user.id);
+      await refreshCheckoutSummary(ctx, user, checkoutId);
       return;
     }
     if (data.startsWith("checkout:cancel:")) {
@@ -3375,6 +3568,7 @@ export function buildTelegramBot() {
   bot.on("message:text", async (ctx) => {
     const user = await findOrCreateCustomer(ctx);
     if (!user) return;
+    if (await acceptPromoCodeInput(ctx, user, ctx.message.text)) return;
     if (await acceptCustomQuantity(ctx, user, ctx.message.text)) return;
     if (await acceptSupportReply(ctx, user, ctx.message.text)) return;
     if (await acceptSupportMessage(ctx, user, ctx.message.text)) return;

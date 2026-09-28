@@ -5,3 +5,4 @@
 - [Binance SAPI runtime restriction](binance-sapi-runtime.md) — official Binance hosts return HTTP 451 from the current runtime; never auto-approve without verified history.
 - [VenteBot supplier fulfillment](ventebot-supplier-fulfillment.md) — use one idempotency key per order and deliver only after all provider items are confirmed.
 - [VenteBot catalog health](ventebot-catalog-health.md) — a successful reseller-account check does not prove the supplier catalog synced; validate catalog health separately.
+- [Database package checks](database-package-checks.md) — rebuild the db project reference after schema exports and keep pure unit tests independent of its runtime entrypoint.

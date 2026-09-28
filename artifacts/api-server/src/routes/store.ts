@@ -98,6 +98,11 @@ import {
 } from "../lib/binance-topups";
 import { createVenteBotFulfillmentValues } from "../lib/ventebot-fulfillment";
 import { verifyVenteBotCheckoutPrice } from "../lib/ventebot-catalog-sync";
+import {
+  getCheckoutPromoPricing,
+  redeemPromoCodeReservation,
+  releasePromoCodeReservation,
+} from "../lib/promo-codes";
 import { formatUsdCents, MAX_USD_CENTS, parseUsdCents } from "../lib/wallet-adjustment";
 
 const router: IRouter = Router();
@@ -1190,6 +1195,11 @@ router.post("/payments/:paymentId/confirm", async (req, res) => {
     if (!checkout) {
       throw new Error(`Checkout session ${payment.checkoutSessionId} is missing`);
     }
+    const pricing = await getCheckoutPromoPricing(
+      checkout.checkout.id,
+      checkout.checkout.priceUsd,
+      tx,
+    );
 
     if (payment.paymentMethod === "binance" && payment.transactionReference) {
       const transactionClaim = await tx
@@ -1218,7 +1228,7 @@ router.post("/payments/:paymentId/confirm", async (req, res) => {
         durationSnapshot: checkout.checkout.durationSnapshot,
         warrantySnapshot: checkout.checkout.warrantySnapshot,
         quantity: checkout.checkout.quantity,
-        priceUsd: checkout.checkout.priceUsd,
+        priceUsd: pricing.totalUsd,
         egpAmount: payment.egpAmount,
         exchangeRate: payment.exchangeRate,
         paymentMethod: payment.paymentMethod,
@@ -1229,6 +1239,11 @@ router.post("/payments/:paymentId/confirm", async (req, res) => {
       .returning();
     const order = orderRows[0];
     if (!order) throw new Error("Unable to create paid order");
+    await redeemPromoCodeReservation(tx, {
+      checkoutSessionId: checkout.checkout.id,
+      userId: payment.userId,
+      orderId: order.id,
+    });
     if (checkout.ventebotProductId !== null) {
       await tx
         .insert(ventebotOrderFulfillments)
@@ -1292,6 +1307,9 @@ router.post("/payments/:paymentId/reject", async (req, res) => {
       )
       .returning();
     const payment = rows[0];
+    if (payment) {
+      await releasePromoCodeReservation(tx, payment.checkoutSessionId);
+    }
     const topUp = payment
       ? undefined
       : (

@@ -18,6 +18,10 @@ import { logger } from "./logger";
 import { createVenteBotFulfillmentValues } from "./ventebot-fulfillment";
 import { verifyVenteBotCheckoutPrice } from "./ventebot-catalog-sync";
 import {
+  getCheckoutPromoPricing,
+  redeemPromoCodeReservation,
+} from "./promo-codes";
+import {
   BINANCE_VERIFICATION_GRACE_MS,
   evaluateBinancePayment,
   type BinancePayTransaction,
@@ -510,6 +514,11 @@ async function confirmProductPayment(
     if (!checkout) {
       throw new Error(`Checkout session ${payment.checkoutSessionId} is missing`);
     }
+    const pricing = await getCheckoutPromoPricing(
+      checkout.checkout.id,
+      checkout.checkout.priceUsd,
+      tx,
+    );
 
     const orderRows = await tx
       .insert(orders)
@@ -523,7 +532,7 @@ async function confirmProductPayment(
         durationSnapshot: checkout.checkout.durationSnapshot,
         warrantySnapshot: checkout.checkout.warrantySnapshot,
         quantity: checkout.checkout.quantity,
-        priceUsd: checkout.checkout.priceUsd,
+        priceUsd: pricing.totalUsd,
         egpAmount: claimed[0].egpAmount,
         exchangeRate: claimed[0].exchangeRate,
         paymentMethod: claimed[0].paymentMethod,
@@ -534,6 +543,11 @@ async function confirmProductPayment(
       .returning();
     const order = orderRows[0];
     if (!order) throw new Error("Unable to create paid order");
+    await redeemPromoCodeReservation(tx, {
+      checkoutSessionId: checkout.checkout.id,
+      userId: payment.userId,
+      orderId: order.id,
+    });
     if (checkout.checkout.ventebotProductId !== null) {
       await tx
         .insert(ventebotOrderFulfillments)

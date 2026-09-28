@@ -2,6 +2,7 @@ import {
   boolean,
   integer,
   jsonb,
+  index,
   numeric,
   pgEnum,
   pgTable,
@@ -403,6 +404,28 @@ export const promoRedemptions = pgTable("promo_redemptions", {
   discountUsd: numeric("discount_usd", { precision: 12, scale: 2 }).notNull(),
   createdAt: createdAt(),
 });
+
+export const promoCodeReservations = pgTable(
+  "promo_code_reservations",
+  {
+    id: id(),
+    promoCodeId: uuid("promo_code_id").notNull(),
+    checkoutSessionId: uuid("checkout_session_id").notNull(),
+    userId: uuid("user_id").notNull(),
+    discountUsd: numeric("discount_usd", { precision: 12, scale: 2 }).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => ({
+    checkoutSessionIdx: uniqueIndex("promo_code_reservations_checkout_session_idx").on(
+      table.checkoutSessionId,
+    ),
+    promoUserIdx: index("promo_code_reservations_promo_user_idx").on(
+      table.promoCodeId,
+      table.userId,
+    ),
+  }),
+);
 
 export const walletTransactions = pgTable("wallet_transactions", {
   id: id(),
