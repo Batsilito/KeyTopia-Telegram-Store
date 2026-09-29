@@ -10,6 +10,7 @@ import {
   StopFlashSaleResponse,
   CreateProductBody,
   CreatePromoCodeBody,
+  DeletePromoCodeParams,
   DeleteProductParams,
   DeleteProductResponse,
   DeliverOrderBody,
@@ -25,6 +26,9 @@ import {
   ReplyToSupportTicketBody,
   UpdateSupportTicketBody,
   UpdateOrderStatusBody,
+  UpdatePromoCodeBody,
+  UpdatePromoCodeParams,
+  UpdatePromoCodeResponse,
   UpdateStoreSettingsBody,
   SetManualProductStockBody,
 } from "@workspace/api-zod";
@@ -33,11 +37,13 @@ import {
   count,
   desc,
   eq,
+  gt,
   ilike,
   inArray,
   isNotNull,
   isNull,
   lt,
+  or,
   sql,
   sum,
 } from "drizzle-orm";
@@ -54,7 +60,9 @@ import {
   paymentMethods,
   payments,
   products,
+  promoCodeReservations,
   promoCodes,
+  promoRedemptions,
   storeSettings,
   supportMessages,
   supportTickets,
@@ -1762,6 +1770,148 @@ router.post("/promo-codes", async (req, res) => {
     expiresAt: iso(rows[0].expiresAt),
     active: rows[0].active,
   });
+});
+
+router.patch("/promo-codes/:id", async (req, res): Promise<void> => {
+  const admin = await requireAdmin(req, res);
+  if (!requireSuperAdmin(admin, res)) return;
+
+  const params = UpdatePromoCodeParams.safeParse(req.params);
+  const parsed = UpdatePromoCodeBody.safeParse(req.body);
+  if (!params.success || !parsed.success) {
+    res.status(400).json({ error: "Invalid promo code update" });
+    return;
+  }
+
+  const updated = await db.transaction(async (tx) => {
+    const [existing] = await tx
+      .select()
+      .from(promoCodes)
+      .where(eq(promoCodes.id, params.data.id))
+      .for("update")
+      .limit(1);
+    if (!existing) return null;
+    if (existing.active === parsed.data.active) return existing;
+
+    const [row] = await tx
+      .update(promoCodes)
+      .set({ active: parsed.data.active, updatedAt: new Date() })
+      .where(eq(promoCodes.id, existing.id))
+      .returning();
+    if (!row) return null;
+
+    await tx.insert(auditLogs).values({
+      adminId: admin.id,
+      action: parsed.data.active ? "promo_code_reactivated" : "promo_code_stopped",
+      entityType: "promo_code",
+      entityId: row.id,
+      beforeValues: { active: existing.active },
+      afterValues: { active: row.active },
+    });
+    return row;
+  });
+
+  if (!updated) {
+    res.status(404).json({ error: "Promo code not found" });
+    return;
+  }
+
+  res.json(UpdatePromoCodeResponse.parse({
+    id: updated.id,
+    code: updated.code,
+    discountType: updated.discountType,
+    value: numberValue(updated.value),
+    maxUses: updated.maxUses,
+    usedCount: updated.usedCount,
+    expiresAt: iso(updated.expiresAt),
+    active: updated.active,
+  }));
+});
+
+router.delete("/promo-codes/:id", async (req, res): Promise<void> => {
+  const admin = await requireAdmin(req, res);
+  if (!requireSuperAdmin(admin, res)) return;
+
+  const params = DeletePromoCodeParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: "Invalid promo code ID" });
+    return;
+  }
+
+  const result = await db.transaction(async (tx) => {
+    const [promo] = await tx
+      .select()
+      .from(promoCodes)
+      .where(eq(promoCodes.id, params.data.id))
+      .for("update")
+      .limit(1);
+    if (!promo) return { status: "missing" } as const;
+
+    const now = new Date();
+    const activeReservations = await tx
+      .select({ id: promoCodeReservations.id })
+      .from(promoCodeReservations)
+      .innerJoin(
+        checkoutSessions,
+        eq(promoCodeReservations.checkoutSessionId, checkoutSessions.id),
+      )
+      .where(and(
+        eq(promoCodeReservations.promoCodeId, promo.id),
+        or(
+          and(
+            eq(checkoutSessions.status, "pending"),
+            gt(checkoutSessions.expiresAt, now),
+          ),
+          eq(checkoutSessions.status, "submitted"),
+        ),
+      ))
+      .limit(1);
+    if (activeReservations.length) return { status: "reserved" } as const;
+
+    const redemptions = await tx
+      .select({ value: count() })
+      .from(promoRedemptions)
+      .where(eq(promoRedemptions.promoCodeId, promo.id));
+    if (
+      Number(promo.usedCount) > 0 ||
+      Number(redemptions[0]?.value ?? 0) > 0
+    ) {
+      return { status: "redeemed" } as const;
+    }
+
+    await tx
+      .delete(promoCodeReservations)
+      .where(eq(promoCodeReservations.promoCodeId, promo.id));
+    await tx.insert(auditLogs).values({
+      adminId: admin.id,
+      action: "promo_code_deleted",
+      entityType: "promo_code",
+      entityId: promo.id,
+      beforeValues: promo,
+      afterValues: { deleted: true },
+    });
+    await tx.delete(promoCodes).where(eq(promoCodes.id, promo.id));
+    return { status: "deleted" } as const;
+  });
+
+  if (result.status === "missing") {
+    res.status(404).json({ error: "Promo code not found" });
+    return;
+  }
+  if (result.status === "reserved") {
+    res.status(409).json({
+      error: "An active checkout still has a reservation for this code. Wait for the checkout to finish or expire before deleting it.",
+    });
+    return;
+  }
+  if (result.status === "redeemed") {
+    res.status(409).json({
+      error: "This promo code has redemption history and cannot be deleted. Stop it instead to preserve its history.",
+    });
+    return;
+  }
+
+  res.status(204).end();
 });
 
 async function getOrCreateSettings() {

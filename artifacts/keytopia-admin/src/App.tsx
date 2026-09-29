@@ -12,7 +12,7 @@ import {
 import * as XLSX from 'xlsx';
 import {
   useAdminLogin, useAdminLogout, useAdjustCustomerWallet, useConfirmPayment, useCreateFlashSale, useStopFlashSale, useCreateProduct, useDeleteProduct,
-  useCreatePromoCode, useDeliverOrder, useDisableInventory, useGetAdminSession,
+  useCreatePromoCode, useDeletePromoCode, useUpdatePromoCode, useDeliverOrder, useDisableInventory, useGetAdminSession,
   useGetAnalyticsSummary, useGetDashboardOverview, useGetInventorySummary, useGetStoreSettings,
   useImportInventory, useListCustomers, useListFlashSales, useListInventory, useListOrders,
   useListPayments, useListProducts, useListPromoCodes, useListSupportTickets, useGetSupportTicket,
@@ -846,8 +846,295 @@ function FlashSales() {
 }
 
 function PromoCodes() {
-  const query = useListPromoCodes(); const create = useCreatePromoCode(); const [open, setOpen] = useState(false); const qc = useQueryClient(); const [form, setForm] = useState<any>({ code: '', discountType: 'percentage', value: 10, maxUses: '', expiresAt: '', active: true }); const set = (key: string, value: any) => setForm((f: any) => ({ ...f, [key]: value }));
-  return <div className="animate-rise"><PageIntro eyebrow="Retention levers" title="Promo codes" description="Keep promotion rules legible for the team and bounded for the business." action={<Button onClick={() => setOpen(true)} data-testid="button-new-promo-code"><Plus size={16} /> Create code</Button>} /><Card>{query.isLoading ? <LoadingBlock /> : query.isError ? <ErrorState retry={() => query.refetch()} /> : query.data?.length ? <div className="grid gap-px bg-border md:grid-cols-2 xl:grid-cols-3">{query.data.map((promo: any) => <div key={promo.id} className="bg-card p-5" data-testid={`card-promo-${promo.id}`}><div className="flex items-start justify-between"><div className="rounded-xl bg-primary/10 p-2.5 text-primary"><Percent size={18} /></div><Badge tone={promo.active ? 'green' : 'neutral'}>{promo.active ? 'Active' : 'Inactive'}</Badge></div><p className="mt-5 font-mono text-lg font-bold tracking-wider">{promo.code}</p><p className="mt-2 text-2xl font-extrabold">{promo.discountType === 'percentage' ? `${promo.value}%` : money(promo.value)} <span className="text-xs font-bold text-muted-foreground">off</span></p><div className="mt-5 flex justify-between border-t border-border pt-4 text-xs text-muted-foreground"><span>{promo.usedCount} used{promo.maxUses ? ` of ${promo.maxUses}` : ''}</span><span>{promo.expiresAt ? `Expires ${date(promo.expiresAt)}` : 'No expiry'}</span></div></div>)}</div> : <EmptyState icon={Percent} title="No promotion codes" body="Create a bounded offer for a specific campaign or customer cohort." action={<Button onClick={() => setOpen(true)}><Plus size={15} /> Create code</Button>} />}</Card>{open && <Modal title="Create promo code" onClose={() => setOpen(false)}><div className="grid gap-4 md:grid-cols-2"><Field label="Code"><Input value={form.code} onChange={(e) => set('code', e.target.value.toUpperCase())} placeholder="RAMADAN15" data-testid="input-promo-code" /></Field><Field label="Discount type"><Select value={form.discountType} onChange={(e) => set('discountType', e.target.value)}><option value="percentage">Percentage</option><option value="fixed_usd">Fixed USD</option></Select></Field><Field label="Value"><Input type="number" min="0" value={form.value} onChange={(e) => set('value', Number(e.target.value))} /></Field><Field label="Maximum uses" hint="Leave blank for unlimited"><Input type="number" min="1" value={form.maxUses} onChange={(e) => set('maxUses', e.target.value)} /></Field><Field label="Expires at"><Input type="datetime-local" value={form.expiresAt} onChange={(e) => set('expiresAt', e.target.value)} /></Field></div><div className="mt-5 flex justify-end gap-2"><Button variant="secondary" onClick={() => setOpen(false)}>Cancel</Button><Button disabled={!form.code.trim() || create.isPending} onClick={() => create.mutate({ data: { code: form.code, discountType: form.discountType, value: Number(form.value), maxUses: form.maxUses ? Number(form.maxUses) : null, expiresAt: form.expiresAt ? new Date(form.expiresAt).toISOString() : null, active: true } }, { onSuccess: () => { setOpen(false); qc.invalidateQueries({ queryKey: getListPromoCodesQueryKey() }); } })} data-testid="button-save-promo-code"><Check size={15} /> Create code</Button></div></Modal>}</div>;
+  const query = useListPromoCodes();
+  const create = useCreatePromoCode();
+  const update = useUpdatePromoCode();
+  const remove = useDeletePromoCode();
+  const [open, setOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<any | null>(null);
+  const qc = useQueryClient();
+  const [form, setForm] = useState<any>({
+    code: '',
+    discountType: 'percentage',
+    value: 10,
+    maxUses: '',
+    expiresAt: '',
+    active: true,
+  });
+  const set = (key: string, value: any) =>
+    setForm((current: any) => ({ ...current, [key]: value }));
+
+  const togglePromoCode = (promo: any) => {
+    const active = !promo.active;
+    if (
+      !active &&
+      !window.confirm(
+        `Stop ${promo.code}? New checkouts won't be able to use it. Existing checkouts with a reserved discount will remain valid.`,
+      )
+    ) {
+      return;
+    }
+    update.mutate(
+      { id: promo.id, data: { active } },
+      {
+        onSuccess: () => {
+          void qc.invalidateQueries({ queryKey: getListPromoCodesQueryKey() });
+        },
+      },
+    );
+  };
+
+  const openDeleteDialog = (promo: any) => {
+    remove.reset();
+    setDeleteTarget(promo);
+  };
+  const closeDeleteDialog = () => {
+    remove.reset();
+    setDeleteTarget(null);
+  };
+
+  return (
+    <div className="animate-rise">
+      <PageIntro
+        eyebrow="Retention levers"
+        title="Promo codes"
+        description="Keep promotion rules legible for the team and bounded for the business."
+        action={
+          <Button
+            onClick={() => setOpen(true)}
+            data-testid="button-new-promo-code"
+          >
+            <Plus size={16} /> Create code
+          </Button>
+        }
+      />
+      <Card>
+        {query.isLoading ? (
+          <LoadingBlock />
+        ) : query.isError ? (
+          <ErrorState retry={() => query.refetch()} />
+        ) : query.data?.length ? (
+          <>
+            {update.isError && (
+              <p className="border-b border-border px-5 py-3 text-sm font-bold text-destructive">
+                {update.error instanceof Error
+                  ? update.error.message
+                  : 'Could not update the promo code.'}
+              </p>
+            )}
+            <div className="grid gap-px bg-border md:grid-cols-2 xl:grid-cols-3">
+              {query.data.map((promo: any) => (
+                <div
+                  key={promo.id}
+                  className="bg-card p-5"
+                  data-testid={`card-promo-${promo.id}`}
+                >
+                  <div className="flex items-start justify-between">
+                    <div className="rounded-xl bg-primary/10 p-2.5 text-primary">
+                      <Percent size={18} />
+                    </div>
+                    <Badge tone={promo.active ? 'green' : 'neutral'}>
+                      {promo.active ? 'Active' : 'Inactive'}
+                    </Badge>
+                  </div>
+                  <p className="mt-5 font-mono text-lg font-bold tracking-wider">
+                    {promo.code}
+                  </p>
+                  <p className="mt-2 text-2xl font-extrabold">
+                    {promo.discountType === 'percentage'
+                      ? `${promo.value}%`
+                      : money(promo.value)}{' '}
+                    <span className="text-xs font-bold text-muted-foreground">
+                      off
+                    </span>
+                  </p>
+                  <div className="mt-5 flex justify-between border-t border-border pt-4 text-xs text-muted-foreground">
+                    <span>
+                      {promo.usedCount} used
+                      {promo.maxUses ? ` of ${promo.maxUses}` : ''}
+                    </span>
+                    <span>
+                      {promo.expiresAt
+                        ? `Expires ${date(promo.expiresAt)}`
+                        : 'No expiry'}
+                    </span>
+                  </div>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <Button
+                      variant={promo.active ? 'danger' : 'secondary'}
+                      disabled={update.isPending || remove.isPending}
+                      onClick={() => togglePromoCode(promo)}
+                      data-testid={`button-toggle-promo-${promo.id}`}
+                    >
+                      {promo.active ? <X size={15} /> : <RotateCcw size={15} />}
+                      {promo.active ? 'Stop code' : 'Resume code'}
+                    </Button>
+                    <Button
+                      variant="quiet"
+                      disabled={
+                        update.isPending ||
+                        remove.isPending ||
+                        promo.usedCount > 0
+                      }
+                      title={
+                        promo.usedCount > 0
+                          ? 'Codes with redemption history can be stopped, not deleted.'
+                          : 'Permanently delete this unused promo code'
+                      }
+                      onClick={() => openDeleteDialog(promo)}
+                      data-testid={`button-delete-promo-${promo.id}`}
+                    >
+                      <Trash2 size={15} /> Delete
+                    </Button>
+                  </div>
+                  {promo.usedCount > 0 && (
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      This code has redemption history. Stop it to prevent new
+                      uses while keeping its history.
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </>
+        ) : (
+          <EmptyState
+            icon={Percent}
+            title="No promotion codes"
+            body="Create a bounded offer for a specific campaign or customer cohort."
+            action={
+              <Button onClick={() => setOpen(true)}>
+                <Plus size={15} /> Create code
+              </Button>
+            }
+          />
+        )}
+      </Card>
+      {open && (
+        <Modal title="Create promo code" onClose={() => setOpen(false)}>
+          <div className="grid gap-4 md:grid-cols-2">
+            <Field label="Code">
+              <Input
+                value={form.code}
+                onChange={(e) => set('code', e.target.value.toUpperCase())}
+                placeholder="RAMADAN15"
+                data-testid="input-promo-code"
+              />
+            </Field>
+            <Field label="Discount type">
+              <Select
+                value={form.discountType}
+                onChange={(e) => set('discountType', e.target.value)}
+              >
+                <option value="percentage">Percentage</option>
+                <option value="fixed_usd">Fixed USD</option>
+              </Select>
+            </Field>
+            <Field label="Value">
+              <Input
+                type="number"
+                min="0"
+                value={form.value}
+                onChange={(e) => set('value', Number(e.target.value))}
+              />
+            </Field>
+            <Field label="Maximum uses" hint="Leave blank for unlimited">
+              <Input
+                type="number"
+                min="1"
+                value={form.maxUses}
+                onChange={(e) => set('maxUses', e.target.value)}
+              />
+            </Field>
+            <Field label="Expires at">
+              <Input
+                type="datetime-local"
+                value={form.expiresAt}
+                onChange={(e) => set('expiresAt', e.target.value)}
+              />
+            </Field>
+          </div>
+          <div className="mt-5 flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              disabled={!form.code.trim() || create.isPending}
+              onClick={() =>
+                create.mutate(
+                  {
+                    data: {
+                      code: form.code,
+                      discountType: form.discountType,
+                      value: Number(form.value),
+                      maxUses: form.maxUses ? Number(form.maxUses) : null,
+                      expiresAt: form.expiresAt
+                        ? new Date(form.expiresAt).toISOString()
+                        : null,
+                      active: true,
+                    },
+                  },
+                  {
+                    onSuccess: () => {
+                      setOpen(false);
+                      void qc.invalidateQueries({
+                        queryKey: getListPromoCodesQueryKey(),
+                      });
+                    },
+                  },
+                )
+              }
+              data-testid="button-save-promo-code"
+            >
+              <Check size={15} /> Create code
+            </Button>
+          </div>
+        </Modal>
+      )}
+      {deleteTarget && (
+        <Modal title="Permanently delete promo code?" onClose={closeDeleteDialog}>
+          <p className="text-sm leading-6 text-muted-foreground">
+            This will permanently delete <strong>{deleteTarget.code}</strong>.
+            It can’t be restored. Codes with redemption history or active
+            checkout reservations cannot be deleted.
+          </p>
+          {remove.isError && (
+            <p className="mt-4 rounded-xl bg-destructive/10 p-3 text-sm font-bold text-destructive">
+              {remove.error instanceof Error
+                ? remove.error.message
+                : 'Could not delete the promo code.'}
+            </p>
+          )}
+          <div className="mt-5 flex justify-end gap-2">
+            <Button variant="secondary" onClick={closeDeleteDialog}>
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              disabled={remove.isPending || deleteTarget.usedCount > 0}
+              onClick={() =>
+                remove.mutate(
+                  { id: deleteTarget.id },
+                  {
+                    onSuccess: () => {
+                      closeDeleteDialog();
+                      void qc.invalidateQueries({
+                        queryKey: getListPromoCodesQueryKey(),
+                      });
+                    },
+                  },
+                )
+              }
+              data-testid="button-confirm-delete-promo"
+            >
+              <Trash2 size={15} />
+              {remove.isPending ? 'Deleting…' : 'Delete promo code'}
+            </Button>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
 }
 
 function WalletAdjustmentModal({ customer, onClose }: { customer: any; onClose: () => void }) {

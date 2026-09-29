@@ -40,6 +40,7 @@ import {
   retryVenteBotFulfillment,
 } from "../lib/ventebot-fulfillment";
 import { getVenteBotAvailability } from "../lib/ventebot-rules";
+import { createBuyerCatalogCheck } from "../lib/buyer-catalog-check";
 import {
   refreshVenteBotCatalog,
   refreshVenteBotProductQuote,
@@ -86,6 +87,7 @@ const BINANCE_POLL_INTERVAL_MS = 5_000;
 const BINANCE_SUBMISSION_RETRY_DELAYS_MS = [250, 1_000, 2_500, 5_000, 10_000, 20_000] as const;
 const verificationAnimationTimers = new Map<string, ReturnType<typeof setInterval>>();
 const promoCodeInputs = new Map<string, string>();
+const productPhotoFileIds = new Map<string, string>();
 
 export async function validateTelegramCustomEmojiId(
   value: string | null | undefined,
@@ -2014,15 +2016,12 @@ async function getProductAvailability(product: typeof products.$inferSelect) {
   return { inStock: quantity > 0, quantity: String(quantity), maxQuantity: quantity };
 }
 
-async function refreshSupplierCatalogForBuyer() {
-  try {
-    await refreshVenteBotCatalog();
-    return true;
-  } catch (error) {
+const refreshSupplierCatalogForBuyer = createBuyerCatalogCheck(
+  refreshVenteBotCatalog,
+  (error) => {
     logger.warn({ err: error }, "Unable to refresh VenteBot catalog for buyer");
-    return false;
-  }
-}
+  },
+);
 
 function usdPriceCents(value: string | number) {
   return Math.round(Number(value) * 100);
@@ -2145,10 +2144,11 @@ async function showShop(
   user: typeof users.$inferSelect,
   editMessage = false,
   accessAlreadyChecked = false,
+  forceCatalogRefresh = false,
 ) {
   if (!accessAlreadyChecked && !(await ensureAccess(ctx, user))) return;
   const language = languageOf(user);
-  const allRows = await db
+  let allRows = await db
     .select()
     .from(products)
     .where(eq(products.active, true))
@@ -2156,24 +2156,67 @@ async function showShop(
   const hasSupplierProducts = allRows.some(
     (product) => product.ventebotProductId !== null,
   );
-  const supplierCatalogAvailable = hasSupplierProducts
-    ? await refreshSupplierCatalogForBuyer()
-    : true;
-  let rows = allRows.filter(
-    (product) => product.ventebotProductId === null,
-  );
-  if (supplierCatalogAvailable) {
-    const activeSupplierRows = await db
-      .select({ id: ventebotCatalogProducts.id })
-      .from(ventebotCatalogProducts)
-      .where(eq(ventebotCatalogProducts.catalogActive, true));
-    const activeSupplierIds = new Set(activeSupplierRows.map((row) => row.id));
-    rows = allRows.filter(
+  const limitedLocalIds = allRows
+    .filter(
       (product) =>
-        product.ventebotProductId === null ||
-        activeSupplierIds.has(product.ventebotProductId),
-    );
-  }
+        product.ventebotProductId === null && product.stockType !== "unlimited",
+    )
+    .map((product) => product.id);
+  const now = new Date();
+  const [supplierCatalogAvailable, stockRows, activeSaleRows] = await Promise.all([
+    hasSupplierProducts
+      ? refreshSupplierCatalogForBuyer(forceCatalogRefresh)
+      : Promise.resolve(true),
+    limitedLocalIds.length
+      ? db
+          .select({
+            productId: inventoryItems.productId,
+            availableQuantity: count(inventoryItems.id),
+          })
+          .from(inventoryItems)
+          .where(and(
+            inArray(inventoryItems.productId, limitedLocalIds),
+            eq(inventoryItems.status, "available"),
+          ))
+          .groupBy(inventoryItems.productId)
+      : Promise.resolve([]),
+    db
+      .select()
+      .from(flashSales)
+      .where(and(
+        eq(flashSales.status, "active"),
+        lte(flashSales.startsAt, now),
+        gt(flashSales.endsAt, now),
+      )),
+  ]);
+  const [currentRows, activeSupplierRows] = await Promise.all([
+    hasSupplierProducts && supplierCatalogAvailable
+      ? db
+          .select()
+          .from(products)
+          .where(eq(products.active, true))
+          .orderBy(desc(products.createdAt))
+      : Promise.resolve(allRows),
+    hasSupplierProducts && supplierCatalogAvailable
+      ? db
+        .select({
+          id: ventebotCatalogProducts.id,
+          catalogActive: ventebotCatalogProducts.catalogActive,
+          deliveryType: ventebotCatalogProducts.deliveryType,
+          stock: ventebotCatalogProducts.stock,
+          apiTest: ventebotCatalogProducts.apiTest,
+        })
+        .from(ventebotCatalogProducts)
+        .where(eq(ventebotCatalogProducts.catalogActive, true))
+      : Promise.resolve([]),
+  ]);
+  allRows = currentRows;
+  const supplierById = new Map(activeSupplierRows.map((row) => [row.id, row]));
+  const rows = allRows.filter(
+    (product) =>
+      product.ventebotProductId === null ||
+      supplierById.has(product.ventebotProductId),
+  );
   if (rows.length === 0) {
     const message = allRows.length > 0
       ? t(language, "supplierUnavailable")
@@ -2187,14 +2230,6 @@ async function showShop(
     }
     return;
   }
-  const stockRows = await db
-    .select({
-      productId: inventoryItems.productId,
-      availableQuantity: count(inventoryItems.id),
-    })
-    .from(inventoryItems)
-    .where(eq(inventoryItems.status, "available"))
-    .groupBy(inventoryItems.productId);
   const stockByProduct = new Map(
     stockRows.map((row) => [row.productId, Number(row.availableQuantity)]),
   );
@@ -2202,24 +2237,22 @@ async function showShop(
     string,
     Awaited<ReturnType<typeof getProductAvailability>>
   >();
-  await Promise.all(
-    rows
-      .filter((product) => product.ventebotProductId !== null)
-      .map(async (product) => {
-        supplierAvailabilityByProduct.set(
-          product.id,
-          await getProductAvailability(product),
-        );
-      }),
-  );
-  const activeSaleRows = await db
-    .select()
-    .from(flashSales)
-    .where(and(
-      eq(flashSales.status, "active"),
-      lte(flashSales.startsAt, new Date()),
-      gt(flashSales.endsAt, new Date()),
-    ));
+  for (const product of rows) {
+    if (product.ventebotProductId === null) continue;
+    const supplier = supplierById.get(product.ventebotProductId);
+    if (!supplier) continue;
+    const availability = getVenteBotAvailability(
+      supplier,
+      Boolean(process.env.VENTEBOT_RESELLER_KEY),
+    );
+    supplierAvailabilityByProduct.set(product.id, {
+      inStock: availability.available,
+      quantity: availability.quantity === null
+        ? "∞"
+        : String(availability.quantity),
+      maxQuantity: availability.quantity ?? 99,
+    });
+  }
   const activeSaleByProduct = new Map(activeSaleRows.map((sale) => [sale.productId, sale]));
   const sortedRows = [...rows].sort((left, right) => {
     const leftAvailability = supplierAvailabilityByProduct.get(left.id);
@@ -2313,14 +2346,16 @@ async function showProduct(
   user: typeof users.$inferSelect,
   productId: string,
   accessAlreadyChecked = false,
+  forceCatalogRefresh = false,
 ) {
   if (!accessAlreadyChecked && !(await ensureAccess(ctx, user))) return;
   const rows = await db.select().from(products).where(and(eq(products.id, productId), eq(products.active, true))).limit(1);
   let product = rows[0];
   if (!product) return;
   const language = languageOf(user);
+  let supplierAvailability: Awaited<ReturnType<typeof getProductAvailability>> | null = null;
   if (product.ventebotProductId !== null) {
-    if (!(await refreshSupplierCatalogForBuyer())) {
+    if (!(await refreshSupplierCatalogForBuyer(forceCatalogRefresh))) {
       await replaceCallbackMessage(ctx, t(language, "supplierUnavailable"), {
         reply_markup: new InlineKeyboard()
           .text(t(language, "refreshStock"), `product:refresh:${product.id}`)
@@ -2342,7 +2377,12 @@ async function showProduct(
       return;
     }
     const supplierRows = await db
-      .select({ catalogActive: ventebotCatalogProducts.catalogActive })
+      .select({
+        catalogActive: ventebotCatalogProducts.catalogActive,
+        deliveryType: ventebotCatalogProducts.deliveryType,
+        stock: ventebotCatalogProducts.stock,
+        apiTest: ventebotCatalogProducts.apiTest,
+      })
       .from(ventebotCatalogProducts)
       .where(eq(ventebotCatalogProducts.id, product.ventebotProductId!))
       .limit(1);
@@ -2355,11 +2395,24 @@ async function showProduct(
       });
       return;
     }
+    const availability = getVenteBotAvailability(
+      supplierRows[0],
+      Boolean(process.env.VENTEBOT_RESELLER_KEY),
+    );
+    supplierAvailability = {
+      inStock: availability.available,
+      quantity: availability.quantity === null
+        ? "∞"
+        : String(availability.quantity),
+      maxQuantity: availability.quantity ?? 99,
+    };
   }
   const name = product.nameEn;
   const instructions = product.instructionsEn;
-  const availability = await getProductAvailability(product);
-  const sale = await getActiveFlashSale(product.id);
+  const [availability, sale] = await Promise.all([
+    supplierAvailability ?? getProductAvailability(product),
+    getActiveFlashSale(product.id),
+  ]);
   const price = effectiveProductPrice(product, sale);
   const keyboard = new InlineKeyboard();
   if (availability.inStock) {
@@ -2387,15 +2440,8 @@ async function showProduct(
     duration: product.duration,
   });
   if (product.imageUrl) {
-    let photoSent = false;
-    try {
-      const photo = await productTelegramPhoto(product.imageUrl, product.id);
-      await ctx.replyWithPhoto(photo);
-      photoSent = true;
-    } catch (error) {
-      logger.warn({ err: error, productId: product.id }, "Unable to send product image");
-    }
-    if (photoSent) {
+    if (await sendProductPhoto(ctx, product.imageUrl, product.id)) {
+      await ctx.reply(details, { parse_mode: "HTML", reply_markup: keyboard });
       const callbackMessage = ctx.callbackQuery?.message;
       if (callbackMessage?.chat.type === "private") {
         try {
@@ -2407,19 +2453,50 @@ async function showProduct(
           logger.debug({ err: error, productId: product.id }, "Unable to remove the previous product message");
         }
       }
-      await ctx.reply(details, { parse_mode: "HTML", reply_markup: keyboard });
       return;
     }
   }
   await replaceCallbackMessage(ctx, details, { parse_mode: "HTML", reply_markup: keyboard });
 }
 
+async function sendProductPhoto(ctx: Context, imageUrl: string, productId: string) {
+  const storedImage = imageUrl.startsWith("/objects/uploads/");
+  const cachedId = storedImage ? productPhotoFileIds.get(imageUrl) : undefined;
+  for (const fileId of cachedId ? [cachedId, null] : [null]) {
+    try {
+      const sent = await ctx.replyWithPhoto(
+        fileId ?? await productTelegramPhoto(imageUrl, productId),
+      );
+      if (storedImage && !fileId) {
+        const newFileId = sent.photo.at(-1)?.file_id;
+        if (newFileId) {
+          if (productPhotoFileIds.size >= 200) {
+            const oldest = productPhotoFileIds.keys().next().value;
+            if (oldest) productPhotoFileIds.delete(oldest);
+          }
+          productPhotoFileIds.set(imageUrl, newFileId);
+        }
+      }
+      return true;
+    } catch (error) {
+      if (fileId) {
+        productPhotoFileIds.delete(imageUrl);
+        continue;
+      }
+      logger.warn({ err: error, productId }, "Unable to send product image");
+    }
+  }
+  return false;
+}
+
 async function productTelegramPhoto(imageUrl: string, productId: string) {
   if (!imageUrl.startsWith("/objects/uploads/")) return imageUrl;
 
   const file = await objectStorageService.getObjectEntityFile(imageUrl);
-  const [metadata] = await file.getMetadata();
-  const [buffer] = await file.download();
+  const [[metadata], [buffer]] = await Promise.all([
+    file.getMetadata(),
+    file.download(),
+  ]);
   const contentType = String(metadata.contentType ?? "");
   const extension =
     contentType === "image/png" ? "png" : contentType === "image/webp" ? "webp" : "jpg";
@@ -3310,7 +3387,7 @@ export function buildTelegramBot() {
         if (startPayload.productId) await showProduct(ctx, user, startPayload.productId, true);
         else if (startPayload.openShop) await showShop(ctx, user, false, true);
         else {
-          await refreshSupplierCatalogForBuyer();
+          void refreshSupplierCatalogForBuyer();
           await showHome(ctx, user);
         }
       }
@@ -3325,7 +3402,7 @@ export function buildTelegramBot() {
       return;
     }
     if (await ensureAccess(ctx, user)) {
-      await refreshSupplierCatalogForBuyer();
+      void refreshSupplierCatalogForBuyer();
       await showHome(ctx, user);
     }
   });
@@ -3357,10 +3434,10 @@ export function buildTelegramBot() {
     if (user) await showSupport(ctx, user);
   });
   bot.on("callback_query:data", async (ctx) => {
+    await ctx.answerCallbackQuery();
     const user = await findOrCreateCustomer(ctx);
     if (!user) return;
     const data = ctx.callbackQuery.data;
-    await ctx.answerCallbackQuery();
     if (data.startsWith("language:")) {
       await ctx.reply("The bot is available in English only.");
       if (await ensureAccess(ctx, user)) await showHome(ctx, user);
@@ -3461,7 +3538,7 @@ export function buildTelegramBot() {
       return;
     }
     if (data === "shop:refresh") {
-      await showShop(ctx, user, true);
+      await showShop(ctx, user, true, false, true);
       return;
     }
     if (data === "nav:channel") {
@@ -3536,7 +3613,7 @@ export function buildTelegramBot() {
     }
     if (data.startsWith("product:")) {
       if (data.startsWith("product:refresh:")) {
-        await showProduct(ctx, user, data.slice("product:refresh:".length));
+        await showProduct(ctx, user, data.slice("product:refresh:".length), false, true);
         return;
       }
       await showProduct(ctx, user, data.slice("product:".length));

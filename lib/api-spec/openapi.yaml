@@ -674,6 +674,44 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PromoCode"
+  /promo-codes/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+    patch:
+      operationId: updatePromoCode
+      tags: [promotions]
+      summary: Stop or reactivate a promo code
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PromoCodeStatusUpdate"
+      responses:
+        "200":
+          description: Updated promo code
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PromoCode"
+        "404":
+          description: Promo code not found
+    delete:
+      operationId: deletePromoCode
+      tags: [promotions]
+      summary: Permanently delete an unused promo code
+      responses:
+        "204":
+          description: Promo code deleted
+        "404":
+          description: Promo code not found
+        "409":
+          description: Promo code has redemption history or active checkout reservations
   /settings:
     get:
       operationId: getStoreSettings
@@ -1343,6 +1381,11 @@ components:
         expiresAt: { type: ["string", "null"], format: date-time }
         active: { type: boolean }
       required: [code, discountType, value, active]
+    PromoCodeStatusUpdate:
+      type: object
+      properties:
+        active: { type: boolean }
+      required: [active]
     StoreSettings:
       type: object
       properties:

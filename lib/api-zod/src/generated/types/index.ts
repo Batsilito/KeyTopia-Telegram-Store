@@ -81,6 +81,7 @@ export * from './promoCode';
 export * from './promoCodeDiscountType';
 export * from './promoCodeInput';
 export * from './promoCodeInputDiscountType';
+export * from './promoCodeStatusUpdate';
 export * from './storeSettings';
 export * from './storeSettingsPaymentRounding';
 export * from './storeSettingsUpdate';

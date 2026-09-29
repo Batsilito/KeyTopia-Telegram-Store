@@ -61,6 +61,7 @@ import type {
   ProductUpdate,
   PromoCode,
   PromoCodeInput,
+  PromoCodeStatusUpdate,
   StoreSettings,
   StoreSettingsUpdate,
   SupportMessage,
@@ -3066,6 +3067,169 @@ export const useCreatePromoCode = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getCreatePromoCodeMutationOptions(options));
+    }
+
+export const getUpdatePromoCodeUrl = (id: string,) => {
+
+
+
+
+  return `/api/promo-codes/${id}`
+}
+
+/**
+ * @summary Stop or reactivate a promo code
+ */
+export const updatePromoCode = async (id: string,
+    promoCodeStatusUpdate: PromoCodeStatusUpdate, options?: Parameters<typeof customFetch>[1]): Promise<PromoCode> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<PromoCode>(getUpdatePromoCodeUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(promoCodeStatusUpdate)
+  }
+);}
+
+
+
+
+
+export const getUpdatePromoCodeMutationKey = () => ['updatePromoCode'] as const;
+
+export const getUpdatePromoCodeMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updatePromoCode>>, TError,UpdatePromoCodeMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updatePromoCode>>, TError,UpdatePromoCodeMutationVariables, TContext> => {
+
+const mutationKey = getUpdatePromoCodeMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updatePromoCode>>, UpdatePromoCodeMutationVariables> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  updatePromoCode(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdatePromoCodeMutationResult = NonNullable<Awaited<ReturnType<typeof updatePromoCode>>>
+    export type UpdatePromoCodeMutationBody = BodyType<PromoCodeStatusUpdate>
+    export type UpdatePromoCodeMutationError = ErrorType<void>
+    export type UpdatePromoCodeMutationVariables = {id: string;data: BodyType<PromoCodeStatusUpdate>}
+
+    /**
+ * @summary Stop or reactivate a promo code
+ */
+export const useUpdatePromoCode = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updatePromoCode>>, TError,UpdatePromoCodeMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updatePromoCode>>,
+        TError,
+        UpdatePromoCodeMutationVariables,
+        TContext
+      > => {
+      return useMutation(getUpdatePromoCodeMutationOptions(options));
+    }
+
+export const getDeletePromoCodeUrl = (id: string,) => {
+
+
+
+
+  return `/api/promo-codes/${id}`
+}
+
+/**
+ * @summary Permanently delete an unused promo code
+ */
+export const deletePromoCode = async (id: string, options?: Parameters<typeof customFetch>[1]): Promise<void> => {
+
+  return customFetch<void>(getDeletePromoCodeUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeletePromoCodeMutationKey = () => ['deletePromoCode'] as const;
+
+export const getDeletePromoCodeMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deletePromoCode>>, TError,DeletePromoCodeMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deletePromoCode>>, TError,DeletePromoCodeMutationVariables, TContext> => {
+
+const mutationKey = getDeletePromoCodeMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deletePromoCode>>, DeletePromoCodeMutationVariables> = (props) => {
+          const {id} = props ?? {};
+
+          return  deletePromoCode(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeletePromoCodeMutationResult = NonNullable<Awaited<ReturnType<typeof deletePromoCode>>>
+
+    export type DeletePromoCodeMutationError = ErrorType<void>
+    export type DeletePromoCodeMutationVariables = {id: string}
+
+    /**
+ * @summary Permanently delete an unused promo code
+ */
+export const useDeletePromoCode = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deletePromoCode>>, TError,DeletePromoCodeMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deletePromoCode>>,
+        TError,
+        DeletePromoCodeMutationVariables,
+        TContext
+      > => {
+      return useMutation(getDeletePromoCodeMutationOptions(options));
     }
 
 export const getGetStoreSettingsUrl = () => {

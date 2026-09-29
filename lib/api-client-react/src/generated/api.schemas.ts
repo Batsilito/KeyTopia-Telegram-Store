@@ -681,6 +681,10 @@ export interface PromoCodeInput {
   active: boolean;
 }
 
+export interface PromoCodeStatusUpdate {
+  active: boolean;
+}
+
 export type StoreSettingsPaymentRounding = typeof StoreSettingsPaymentRounding[keyof typeof StoreSettingsPaymentRounding];
 
 

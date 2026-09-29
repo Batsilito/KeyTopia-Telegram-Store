@@ -1002,6 +1002,39 @@ export const CreatePromoCodeResponse = zod.object({
 
 
 /**
+ * @summary Stop or reactivate a promo code
+ */
+export const UpdatePromoCodeParams = zod.object({
+  "id": zod.coerce.string().uuid()
+})
+
+export const UpdatePromoCodeBody = zod.object({
+  "active": zod.boolean()
+})
+
+export const UpdatePromoCodeResponse = zod.object({
+  "id": zod.string().uuid(),
+  "code": zod.string(),
+  "discountType": zod.enum(['percentage', 'fixed_usd']),
+  "value": zod.number(),
+  "maxUses": zod.number().int().nullable(),
+  "usedCount": zod.number().int(),
+  "expiresAt": zod.coerce.date().nullable(),
+  "active": zod.boolean()
+})
+
+
+/**
+ * @summary Permanently delete an unused promo code
+ */
+export const DeletePromoCodeParams = zod.object({
+  "id": zod.coerce.string().uuid()
+})
+
+export const DeletePromoCodeResponse = zod.void()
+
+
+/**
  * @summary Get store settings
  */
 export const GetStoreSettingsResponse = zod.object({
