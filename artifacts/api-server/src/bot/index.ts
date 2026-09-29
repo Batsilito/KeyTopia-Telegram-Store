@@ -2590,35 +2590,49 @@ async function showCheckoutSummary(
     1,
     Math.ceil((checkout.expiresAt.getTime() - Date.now()) / 60_000),
   );
+  const paymentOptions = [
+    {
+      method: "wallet",
+      description: paymentMethodDescription("wallet", language),
+    },
+    ...methods.map((method) => ({
+      method: method.method,
+      description: paymentMethodDescription(method.method, language),
+    })),
+  ].map(
+    ({ method, description }) =>
+      `<b>${escapeHtml(paymentMethodLabel(method, language))}</b>\n${escapeHtml(description)}`,
+  );
   const summary = [
     notice ? escapeHtml(notice) : "",
     `<b>${t(language, "orderCreated")}</b>`,
-    "",
-    `🧩 <b>${t(language, "product")}:</b> ${escapeHtml(checkout.productNameSnapshot)}`,
-    `➕ <b>${t(language, "quantity")}:</b> ${checkout.quantity}`,
-    `💲 <b>${t(language, "unitPrice")}:</b> ${unitPrice} USDT`,
-    `📊 <b>${t(language, "subtotal")}:</b> ${pricing.subtotalUsd} USDT`,
-    ...(pricing.code
-      ? [
-          `🏷️ <b>${t(language, "promoCodeLabel")}:</b> ${escapeHtml(pricing.code)}`,
-          `➖ <b>${t(language, "promoCodeDiscount")}:</b> -${pricing.discountUsd} USDT`,
-        ]
-      : []),
-    `💰 <b>${t(language, "total")}:</b> ${pricing.totalUsd} USDT`,
-    `🏪 <b>${t(language, "seller")}:</b> KeyTopia`,
-    `📁 <b>${t(language, "shopOrder")}:</b> ${escapeHtml(checkout.reference)}`,
-    "",
-    `<b>${t(language, "paymentMethodsHeader")}</b>`,
-    `• <b>${escapeHtml(paymentMethodLabel("wallet", language))}</b> ${escapeHtml(paymentMethodDescription("wallet", language))}`,
-    ...methods.map(
-      (method) =>
-        `• <b>${escapeHtml(paymentMethodLabel(method.method, language))}</b> ${escapeHtml(paymentMethodDescription(method.method, language))}`,
-    ),
-    "",
+    [
+      `🧩 <b>${t(language, "product")}:</b> ${escapeHtml(checkout.productNameSnapshot)}`,
+      `➕ <b>${t(language, "quantity")}:</b> ${checkout.quantity}`,
+    ].join("\n"),
+    [
+      `💲 <b>${t(language, "unitPrice")}:</b> ${unitPrice} USDT`,
+      `📊 <b>${t(language, "subtotal")}:</b> ${pricing.subtotalUsd} USDT`,
+      ...(pricing.code
+        ? [
+            `🏷️ <b>${t(language, "promoCodeLabel")}:</b> ${escapeHtml(pricing.code)}`,
+            `➖ <b>${t(language, "promoCodeDiscount")}:</b> -${pricing.discountUsd} USDT`,
+          ]
+        : []),
+      `💰 <b>${t(language, "total")}:</b> ${pricing.totalUsd} USDT`,
+    ].join("\n"),
+    [
+      `🏪 <b>${t(language, "seller")}:</b> KeyTopia`,
+      `📁 <b>${t(language, "shopOrder")}:</b> ${escapeHtml(checkout.reference)}`,
+    ].join("\n"),
+    [
+      `<b>${t(language, "paymentMethodsHeader")}</b>`,
+      paymentOptions.join("\n\n"),
+    ].join("\n\n"),
     `⏱ <b>${t(language, "paymentWindow")}:</b> ${timeoutMinutes} minutes`,
   ]
     .filter(Boolean)
-    .join("\n");
+    .join("\n\n");
   await replaceCallbackMessage(ctx, summary, {
     parse_mode: "HTML",
     reply_markup: keyboard,
